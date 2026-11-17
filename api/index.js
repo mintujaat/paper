@@ -135,7 +135,7 @@ function safeUser(row) {
   return {
     id: row.id, name: row.name || "Student", email: row.email || "", city: row.city || "",
     avatarUrl: row.avatar_url || "", authProvider: row.google_sub ? "google" : "email",
-    freePapersUsed: Number(row.free_papers_used || 0), disabled: row.disabled === true, createdAt: row.created_at
+    paperCredits: Number(row.paper_credits || 0), freePapersUsed: Number(row.free_papers_used || 0), disabled: row.disabled === true, createdAt: row.created_at
   };
 }
 
@@ -321,17 +321,25 @@ app.get("/api/papers/:id/leaderboard", async (req, res) => {
   } catch (e) { res.status(500).json({ error: errorText(e) }); }
 });
 
-// Razorpay Paper Unlock ------------------------------------------------------
+// Plans & Razorpay Credit Pack Unlock ----------------------------------------
+app.get("/api/plans", async (_req, res) => {
+  try {
+    const { data } = await supa(db.from("quiz_plans").select("*").eq("active", true).order("sort_order", { ascending: true }).order("price_inr", { ascending: true }));
+    res.json({ plans: (data || []).map(p => ({ id: p.id, title: p.title, papersCount: Number(p.papers_count), priceInr: Number(p.price_inr), badge: p.badge || "" })) });
+  } catch (e) { res.status(500).json({ error: errorText(e) }); }
+});
+
 app.post("/api/payments/create-order", requireUser, async (req, res) => {
   try {
-    if (!razorpayReady) return res.status(503).json({ error: "Razorpay keys are not added in Vercel yet. Add RAZORPAY_KEY_ID & RAZORPAY_KEY_SECRET to enable ₹25 paid papers." });
-    const paperId = String(req.body?.paperId || "").trim();
-    const { data: paper } = await supa(db.from("quiz_papers").select("*").eq("id", paperId).eq("active", true).maybeSingle());
-    if (!paper) return res.status(404).json({ error: "Exam paper not found." });
-    const amount = money(Math.max(1, Number(paper.price_inr || 25)));
-    const order = await razorpay.orders.create({ amount: Math.round(amount * 100), currency: "INR", receipt: `quiz_${req.user.uid.slice(0, 8)}_${Date.now()}` });
-    await supa(db.from("quiz_payments").insert({ razorpay_order_id: order.id, user_id: req.user.uid, paper_id: paper.id, amount, currency: "INR", status: "created" }));
-    res.json({ orderId: order.id, amount: order.amount, currency: order.currency, keyId: process.env.RAZORPAY_KEY_ID, paperTitle: paper.title });
+    if (!razorpayReady) return res.status(503).json({ error: "Razorpay keys are not added in Vercel yet. Add RAZORPAY_KEY_ID & RAZORPAY_KEY_SECRET to enable paid plans." });
+    const planId = String(req.body?.planId || "").trim();
+    const { data: plan } = await supa(db.from("quiz_plans").select("*").eq("id", planId).eq("active", true).maybeSingle());
+    if (!plan) return res.status(404).json({ error: "Selected plan not found." });
+    const amount = money(Math.max(1, Number(plan.price_inr || 25)));
+    const credits = Math.max(1, Number(plan.papers_count || 1));
+    const order = await razorpay.orders.create({ amount: Math.round(amount * 100), currency: "INR", receipt: `plan_${req.user.uid.slice(0, 8)}_${Date.now()}` });
+    await supa(db.from("quiz_payments").insert({ razorpay_order_id: order.id, user_id: req.user.uid, plan_id: plan.id, credits_count: credits, amount, currency: "INR", status: "created" }));
+    res.json({ orderId: order.id, amount: order.amount, currency: order.currency, keyId: process.env.RAZORPAY_KEY_ID, planTitle: plan.title, papersCount: credits });
   } catch (e) { res.status(502).json({ error: errorText(e) }); }
 });
 
@@ -347,13 +355,11 @@ app.post("/api/payments/verify", requireUser, async (req, res) => {
     if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return res.status(400).json({ error: "Payment signature failed." });
     const payment = await razorpay.payments.fetch(paymentId);
     if (payment.order_id !== orderId || payment.status !== "captured") return res.status(409).json({ error: "Payment not captured." });
-    const { data: rec } = await supa(db.from("quiz_payments").select("*").eq("razorpay_order_id", orderId).eq("user_id", req.user.uid).maybeSingle());
-    if (!rec) return res.status(404).json({ error: "Payment record not found." });
-    if (rec.status !== "paid") {
-      await supa(db.from("quiz_payments").update({ status: "paid", payment_id: paymentId, paid_at: new Date().toISOString() }).eq("razorpay_order_id", orderId));
-      await notifyTelegramAdmin(`💰 <b>Mock Paper Purchased (₹${Number(rec.amount).toFixed(2)})</b>\n👤 ${escTg(req.user.name)} (<code>${escTg(req.user.email)}</code>)\n📝 Paper: <b>${escTg(rec.paper_id)}</b>\n🧾 Payment: <code>${escTg(paymentId)}</code>`);
+    const { data } = await supa(db.rpc("quiz_credit_plan_payment", { p_razorpay_order_id: orderId, p_payment_id: paymentId, p_user_id: req.user.uid }));
+    if (data && !data.alreadyCredited) {
+      await notifyTelegramAdmin(`💰 <b>Paper Plan Purchased (₹${Number(data.amount || 0).toFixed(2)})</b>\n👤 ${escTg(req.user.name)} (<code>${escTg(req.user.email)}</code>)\n🎟 Credits Added: <b>+${data.addedCredits} Papers</b> (Total: ${data.paperCredits})\n🧾 Payment: <code>${escTg(paymentId)}</code>`);
     }
-    res.json({ ok: true, paperId: rec.paper_id });
+    res.json(data || { ok: true });
   } catch (e) { res.status(400).json({ error: errorText(e) }); }
 });
 
@@ -378,19 +384,18 @@ app.post("/api/attempts/start", requireUser, async (req, res) => {
     if (!paper) return res.status(404).json({ error: "Exam paper not found." });
     if (!userRow || userRow.disabled) return res.status(403).json({ error: "Account unavailable." });
 
-    // Check if user has an unused paid pass for this paper
-    const { data: paidPass } = await supa(db.from("quiz_payments").select("*").eq("user_id", req.user.uid).eq("paper_id", paper.id).eq("status", "paid").is("used_for_attempt_id", null).order("created_at", { ascending: true }).limit(1).maybeSingle());
+    const freeOk = await checkFreeEligible(req, userRow, settings);
     let isFree = false;
-    if (!paidPass) {
-      const freeOk = await checkFreeEligible(req, userRow, settings);
-      if (!freeOk) {
-        return res.status(402).json({
-          error: `Your 1st free paper is already used. Unlock this paper for ₹${Number(paper.price_inr || 25)}.`,
-          requiresPayment: true,
-          priceInr: Number(paper.price_inr || 25)
-        });
-      }
+    let usedCredit = false;
+    if (freeOk) {
       isFree = true;
+    } else if (Number(userRow.paper_credits || 0) > 0) {
+      usedCredit = true;
+    } else {
+      return res.status(402).json({
+        error: "Your 1st free paper is used and you have 0 paper credits. Choose a plan to continue.",
+        requiresPlan: true
+      });
     }
 
     const { data: allQuestions } = await supa(db.from("quiz_questions").select("id,question_text,option_a,option_b,option_c,option_d,topic,difficulty").eq("paper_id", paper.id).eq("active", true));
@@ -409,7 +414,7 @@ app.post("/api/attempts/start", requireUser, async (req, res) => {
       user_id: req.user.uid, paper_id: paper.id, user_name: userRow.name, user_email: userRow.email,
       user_city: city || userRow.city || "", share_with_sponsor: shareWithSponsor,
       question_ids: picked.map(q => q.id), total_questions: picked.length,
-      is_free: isFree, razorpay_order_id: paidPass?.razorpay_order_id || null, status: "in_progress"
+      is_free: isFree, status: "in_progress"
     }).select("*").single());
 
     if (isFree) {
@@ -423,8 +428,8 @@ app.post("/api/attempts/start", requireUser, async (req, res) => {
         }))
       ]);
       appendCookie(res, FREE_COOKIE, "1", 315360000);
-    } else if (paidPass) {
-      await supa(db.from("quiz_payments").update({ used_for_attempt_id: attempt.id }).eq("razorpay_order_id", paidPass.razorpay_order_id));
+    } else if (usedCredit) {
+      await supa(db.from("quiz_users").update({ paper_credits: Math.max(0, Number(userRow.paper_credits || 0) - 1), updated_at: new Date().toISOString() }).eq("id", req.user.uid));
     }
 
     res.json({
@@ -753,4 +758,41 @@ app.put("/api/admin/settings", requireAdmin, async (req, res) => {
   } catch (e) { res.status(500).json({ error: errorText(e) }); }
 });
 
+
+// Admin Paper Plans CRUD -----------------------------------------------------
+app.get("/api/admin/plans", requireAdmin, async (_req, res) => {
+  try {
+    const { data } = await supa(db.from("quiz_plans").select("*").order("sort_order", { ascending: true }).order("price_inr", { ascending: true }));
+    res.json({ plans: data || [] });
+  } catch (e) { res.status(500).json({ error: errorText(e) }); }
+});
+app.post("/api/admin/plans", requireAdmin, async (req, res) => {
+  try {
+    const title = String(req.body?.title || "").trim().slice(0, 80);
+    const papersCount = Math.max(1, Math.min(500, Math.floor(asNum(req.body?.papersCount, 1))));
+    const priceInr = money(Math.max(1, asNum(req.body?.priceInr, 25)));
+    const badge = String(req.body?.badge || "").trim().slice(0, 40);
+    const sortOrder = Math.floor(asNum(req.body?.sortOrder, papersCount));
+    if (title.length < 2) return res.status(400).json({ error: "Enter a plan title." });
+    const id = `plan-${papersCount}-${Date.now().toString().slice(-4)}`;
+    const { data } = await supa(db.from("quiz_plans").insert({ id, title, papers_count: papersCount, price_inr: priceInr, badge, sort_order: sortOrder, active: true }).select("*").single());
+    res.json({ ok: true, plan: data });
+  } catch (e) { res.status(500).json({ error: errorText(e) }); }
+});
+app.patch("/api/admin/plans/:id", requireAdmin, async (req, res) => {
+  try {
+    const patch = { updated_at: new Date().toISOString() };
+    if (req.body?.active !== undefined) patch.active = req.body.active === true;
+    if (req.body?.priceInr !== undefined) patch.price_inr = money(Math.max(1, asNum(req.body.priceInr, 25)));
+    if (req.body?.papersCount !== undefined) patch.papers_count = Math.max(1, Math.floor(asNum(req.body.papersCount, 1)));
+    await supa(db.from("quiz_plans").update(patch).eq("id", req.params.id));
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: errorText(e) }); }
+});
+app.delete("/api/admin/plans/:id", requireAdmin, async (req, res) => {
+  try { await supa(db.from("quiz_plans").delete().eq("id", req.params.id)); res.json({ ok: true }); }
+  catch (e) { res.status(500).json({ error: errorText(e) }); }
+});
+
 module.exports = app;
+

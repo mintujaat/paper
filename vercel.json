@@ -6,33 +6,11 @@
       "destination": "/api/index.js"
     },
     {
-      "source": "/admin",
-      "destination": "/admin.html"
-    },
-    {
       "source": "/(.*)",
       "destination": "/index.html"
     }
   ],
   "headers": [
-    {
-      "source": "/admin.html",
-      "headers": [
-        {
-          "key": "Cache-Control",
-          "value": "no-store"
-        }
-      ]
-    },
-    {
-      "source": "/admin.js",
-      "headers": [
-        {
-          "key": "Cache-Control",
-          "value": "no-store"
-        }
-      ]
-    },
     {
       "source": "/api/(.*)",
       "headers": [
