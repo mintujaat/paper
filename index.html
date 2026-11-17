@@ -1,12 +1,34 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Document</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#f4f6fb" id="themeColorMeta">
+  <meta name="description" content="15-minute mock tests for HSSC, Haryana Police, SSC and Board exams. First paper free!">
+  <title>Mintu Exam Hub — Mock Tests</title>
+  <script>
+    (function(){
+      try {
+        var t = localStorage.getItem("quiz_theme") || "light";
+        document.documentElement.setAttribute("data-theme", t);
+      } catch (e) {}
+    })();
+  </script>
+  <link rel="manifest" href="/manifest.json">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Exam Hub">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Space+Grotesk:wght@600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/styles.css?v=1">
+  <script src="https://checkout.razorpay.com/v1/checkout.js" defer></script>
+  <script src="https://accounts.google.com/gsi/client" defer></script>
+  <script src="/app.js?v=1" defer></script>
 </head>
-<body>h1
-    <h1>paper website soon bby...</h1>
-    
+<body>
+  <div id="appRoot"><div class="boot"><span class="logo-mark">Q</span><span class="spinner"></span><p>Loading Mock Tests…</p></div></div>
+  <div id="modalRoot"></div>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
 </body>
 </html>
