@@ -133,7 +133,7 @@ async function getSettings() {
 
 function safeUser(row) {
   return {
-    id: row.id, name: row.name || "Student", email: row.email || "", city: row.city || "",
+    id: row.id, name: row.name || "Student", email: row.email || "", city: row.city || "", state: row.state || "",
     avatarUrl: row.avatar_url || "", authProvider: row.google_sub ? "google" : "email",
     paperCredits: Number(row.paper_credits || 0), freePapersUsed: Number(row.free_papers_used || 0), disabled: row.disabled === true, createdAt: row.created_at
   };
@@ -281,9 +281,12 @@ app.get("/api/auth/me", async (req, res) => {
   const user = userFromReq(req);
   if (!user) return res.json({ authenticated: false, user: null });
   try {
-    const { data } = await supa(db.from("quiz_users").select("*").eq("id", user.uid).maybeSingle());
+    const [{ data }, { data: paidRows }] = await Promise.all([
+      supa(db.from("quiz_users").select("*").eq("id", user.uid).maybeSingle()),
+      supa(db.from("quiz_payments").select("razorpay_order_id").eq("user_id", user.uid).eq("status", "paid").limit(1))
+    ]);
     if (!data || data.disabled) { clearCookie(res, SESSION_COOKIE); return res.json({ authenticated: false, user: null }); }
-    res.json({ authenticated: true, user: safeUser(data) });
+    res.json({ authenticated: true, user: { ...safeUser(data), isPaidUser: (paidRows || []).length > 0 } });
   } catch (e) { res.status(500).json({ error: errorText(e) }); }
 });
 app.post("/api/auth/logout", (_req, res) => { clearCookie(res, SESSION_COOKIE); res.json({ ok: true }); });
@@ -506,9 +509,28 @@ app.post("/api/questions/:id/report", requireUser, async (req, res) => {
 });
 
 
-// Student Bookmarks (Save Questions for Revision) ----------------------------
+// Student Profile Update -----------------------------------------------------
+app.patch("/api/profile", requireUser, async (req, res) => {
+  try {
+    const name = String(req.body?.name || "").trim().slice(0, 60);
+    const state = String(req.body?.state || "").trim().slice(0, 60);
+    const city = String(req.body?.city || "").trim().slice(0, 60);
+    if (name.length < 2) return res.status(400).json({ error: "Enter a valid name." });
+    const { data } = await supa(db.from("quiz_users").update({ name, state, city, updated_at: new Date().toISOString() }).eq("id", req.user.uid).select("*").single());
+    res.json({ ok: true, user: safeUser(data) });
+  } catch (e) { res.status(500).json({ error: errorText(e) }); }
+});
+
+// Student Bookmarks (Paid Users Only) ----------------------------------------
+async function userHasPaid(userId) {
+  const { data } = await supa(db.from("quiz_payments").select("razorpay_order_id").eq("user_id", userId).eq("status", "paid").limit(1));
+  return (data || []).length > 0;
+}
 app.get("/api/bookmarks", requireUser, async (req, res) => {
   try {
+    if (!(await userHasPaid(req.user.uid))) {
+      return res.status(403).json({ error: "Saved Questions is unlocked for paid plan users only.", requiresPlan: true });
+    }
     const { data: bms } = await supa(db.from("quiz_bookmarks").select("question_id,paper_id,created_at").eq("user_id", req.user.uid).order("created_at", { ascending: false }).limit(100));
     const list = bms || [];
     if (!list.length) return res.json({ bookmarks: [] });
@@ -519,6 +541,9 @@ app.get("/api/bookmarks", requireUser, async (req, res) => {
 });
 app.post("/api/bookmarks/:questionId", requireUser, async (req, res) => {
   try {
+    if (!(await userHasPaid(req.user.uid))) {
+      return res.status(403).json({ error: "Save Questions is a Pro feature. Buy any Paper Plan to unlock!", requiresPlan: true });
+    }
     const { data: q } = await supa(db.from("quiz_questions").select("id,paper_id").eq("id", req.params.questionId).maybeSingle());
     if (!q) return res.status(404).json({ error: "Question not found." });
     await supa(db.from("quiz_bookmarks").upsert({ user_id: req.user.uid, question_id: q.id, paper_id: q.paper_id }, { onConflict: "user_id,question_id", ignoreDuplicates: true }));
@@ -771,6 +796,18 @@ app.patch("/api/admin/users/:id/status", requireAdmin, async (req, res) => {
   try {
     await supa(db.from("quiz_users").update({ disabled: req.body?.disabled === true, updated_at: new Date().toISOString() }).eq("id", req.params.id));
     res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: errorText(e) }); }
+});
+
+app.post("/api/admin/users/:id/credits", requireAdmin, async (req, res) => {
+  try {
+    const delta = Math.trunc(asNum(req.body?.delta, 0));
+    if (!delta || Math.abs(delta) > 1000) return res.status(400).json({ error: "Enter a valid non-zero credit change." });
+    const { data: u } = await supa(db.from("quiz_users").select("id,paper_credits").eq("id", req.params.id).maybeSingle());
+    if (!u) return res.status(404).json({ error: "Student not found." });
+    const nextCredits = Math.max(0, Number(u.paper_credits || 0) + delta);
+    await supa(db.from("quiz_users").update({ paper_credits: nextCredits, updated_at: new Date().toISOString() }).eq("id", u.id));
+    res.json({ ok: true, paperCredits: nextCredits });
   } catch (e) { res.status(500).json({ error: errorText(e) }); }
 });
 

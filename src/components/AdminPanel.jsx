@@ -306,8 +306,15 @@ export default function AdminPanel({ toast, onExit }) {
               {users.map(u => (
                 <tr key={u.id}>
                   <td><b>{u.name}</b><br /><small>{u.email}</small></td>
-                  <td>{u.city || "—"}</td>
-                  <td><b>{u.paperCredits || 0}</b></td>
+                  <td>{[u.city, u.state].filter(Boolean).join(", ") || "—"}</td>
+                  <td>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                      <b>{u.paperCredits || 0}</b>
+                      <button className="btn btn-outline btn-sm" title="Add 1 credit" onClick={async () => { await api(`/api/admin/users/${encodeURIComponent(u.id)}/credits`, { method: "POST", body: JSON.stringify({ delta: 1 }) }); loadTab("users"); toast("+1 credit added", "success"); }}>+1</button>
+                      <button className="btn btn-outline btn-sm" title="Add 5 credits" onClick={async () => { await api(`/api/admin/users/${encodeURIComponent(u.id)}/credits`, { method: "POST", body: JSON.stringify({ delta: 5 }) }); loadTab("users"); toast("+5 credits added", "success"); }}>+5</button>
+                      <button className="btn btn-outline btn-sm" title="Remove 1 credit" onClick={async () => { await api(`/api/admin/users/${encodeURIComponent(u.id)}/credits`, { method: "POST", body: JSON.stringify({ delta: -1 }) }); loadTab("users"); toast("1 credit removed"); }}>-1</button>
+                    </div>
+                  </td>
                   <td>{u.freePapersUsed}</td>
                   <td><span className={`pill ${u.disabled ? "bad" : "good"}`}>{u.disabled ? "Disabled" : "Active"}</span></td>
                   <td><button className="btn btn-outline btn-sm" onClick={async () => { await api(`/api/admin/users/${encodeURIComponent(u.id)}/status`, { method: "PATCH", body: JSON.stringify({ disabled: !u.disabled }) }); loadTab("users"); }}>{u.disabled ? "Enable" : "Disable"}</button></td>

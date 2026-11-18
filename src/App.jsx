@@ -8,6 +8,7 @@ import ResultView from "./components/ResultView.jsx";
 import AdminPanel from "./components/AdminPanel.jsx";
 
 const CACHE_KEY = "yaadpage_swr_v1";
+const STATES_IN = ["Haryana", "Delhi", "Rajasthan", "Uttar Pradesh", "Punjab", "Himachal Pradesh", "Uttarakhand", "Madhya Pradesh", "Bihar", "Maharashtra", "Gujarat", "Other"];
 function readCache() {
   try { return JSON.parse(localStorage.getItem(CACHE_KEY) || "null"); } catch { return null; }
 }
@@ -29,6 +30,7 @@ export default function App() {
   const [lbPaperId, setLbPaperId] = useState(() => cached?.papers?.[0]?.id || "");
   const [tab, setTab] = useState("tests");
   const [cat, setCat] = useState("all");
+  const [paperSearch, setPaperSearch] = useState("");
   const [theme, setTheme] = useState(() => document.documentElement.getAttribute("data-theme") || "light");
   const [soundOn, setSoundOn] = useState(() => isSoundEnabled());
   const [authModal, setAuthModal] = useState(null);
@@ -36,6 +38,7 @@ export default function App() {
   const [activeQuiz, setActiveQuiz] = useState(null);
   const [result, setResult] = useState(null);
   const [startingPaperId, setStartingPaperId] = useState("");
+  const [savingProfile, setSavingProfile] = useState(false);
   const [toastState, setToastState] = useState({ msg: "", kind: "", show: false });
 
   function toast(msg, kind = "") {
@@ -79,9 +82,11 @@ export default function App() {
     writeCache({ config: nextCfg, papers: nextPapers, plans: nextPlans, user: nextUser });
 
     if (nextUser) {
-      Promise.allSettled([api("/api/attempts"), api("/api/bookmarks")]).then(([attR, bmR]) => {
-        if (attR.status === "fulfilled") setAttempts(attR.value.attempts || []);
-        if (bmR.status === "fulfilled") setBookmarks(bmR.value.bookmarks || []);
+      const jobs = [api("/api/attempts")];
+      if (nextUser.isPaidUser) jobs.push(api("/api/bookmarks"));
+      Promise.allSettled(jobs).then(([attR, bmR]) => {
+        if (attR?.status === "fulfilled") setAttempts(attR.value.attempts || []);
+        if (bmR?.status === "fulfilled") setBookmarks(bmR.value.bookmarks || []);
       });
     } else {
       setAttempts([]);
@@ -106,7 +111,7 @@ export default function App() {
     if (tab === "leaderboard" && lbPaperId) {
       api(`/api/papers/${encodeURIComponent(lbPaperId)}/leaderboard`).then(r => setLeaderboard(r.leaderboard || [])).catch(() => {});
     }
-    if (tab === "saved" && user) {
+    if (tab === "saved" && user?.isPaidUser) {
       api("/api/bookmarks").then(r => setBookmarks(r.bookmarks || [])).catch(() => {});
     }
   }, [tab, lbPaperId]);
@@ -134,6 +139,19 @@ export default function App() {
     } finally { setStartingPaperId(""); }
   }
 
+  async function saveProfile(e) {
+    e.preventDefault();
+    if (savingProfile) return;
+    setSavingProfile(true);
+    const fd = Object.fromEntries(new FormData(e.currentTarget).entries());
+    try {
+      await api("/api/profile", { method: "PATCH", body: JSON.stringify(fd) });
+      await refreshData();
+      toast("Profile updated!", "success");
+    } catch (err) { toast(err.message, "error"); }
+    finally { setSavingProfile(false); }
+  }
+
   if (isAdmin) {
     return (
       <>
@@ -150,8 +168,14 @@ export default function App() {
   const siteName = config?.siteName || "YaadPage";
   const freeOk = config?.freeEligible;
   const credits = Number(user?.paperCredits || 0);
+  const isPaidUser = Boolean(user?.isPaidUser);
   const cats = ["all", ...new Set(papers.map(p => p.category || "Other"))];
-  const visiblePapers = cat === "all" ? papers : papers.filter(p => (p.category || "Other") === cat);
+  const q = paperSearch.trim().toLowerCase();
+  const visiblePapers = papers.filter(p => {
+    const matchCat = cat === "all" || (p.category || "Other") === cat;
+    const matchQ = !q || `${p.title} ${p.category} ${p.description || ""}`.toLowerCase().includes(q);
+    return matchCat && matchQ;
+  });
 
   return (
     <div className="app-root">
@@ -169,6 +193,7 @@ export default function App() {
               <button className={tab === "leaderboard" && !result ? "active" : ""} onClick={() => { setResult(null); setTab("leaderboard"); }}>Leaderboard</button>
               <button className={tab === "attempts" && !result ? "active" : ""} onClick={() => { setResult(null); setTab("attempts"); }}>My Scores</button>
               <button className={tab === "saved" && !result ? "active" : ""} onClick={() => { setResult(null); setTab("saved"); }}>Saved ⭐</button>
+              <button className={tab === "profile" && !result ? "active" : ""} onClick={() => { setResult(null); setTab("profile"); }}>Profile</button>
             </nav>
           )}
 
@@ -185,8 +210,8 @@ export default function App() {
               {theme === "dark" ? "☀️" : "🌙"}
             </button>
             {user ? (
-              <button className="btn btn-outline btn-sm" onClick={async () => { await api("/api/auth/logout", { method: "POST", body: "{}" }); setUser(null); setAttempts([]); setBookmarks([]); toast("Logged out."); }}>
-                {user.name.split(" ")[0]} · Logout
+              <button className="btn btn-outline btn-sm" onClick={() => { setResult(null); setTab("profile"); }}>
+                {user.name.split(" ")[0]}
               </button>
             ) : (
               <button className="btn btn-primary btn-sm" onClick={() => setAuthModal({ mode: "login" })}>Sign In</button>
@@ -201,13 +226,13 @@ export default function App() {
         )}
 
         {activeQuiz ? (
-          <QuizRunner quiz={activeQuiz} toast={toast} onSubmitted={res => { setActiveQuiz(null); setResult(res); refreshData(); }} />
+          <QuizRunner quiz={activeQuiz} isPaidUser={isPaidUser} onRequirePlan={() => setShowPlans(true)} toast={toast} onSubmitted={res => { setActiveQuiz(null); setResult(res); refreshData(); }} />
         ) : result ? (
-          <ResultView result={result} siteName={siteName} toast={toast} onBack={() => { setResult(null); setTab("tests"); }} />
+          <ResultView result={result} siteName={siteName} isPaidUser={isPaidUser} onRequirePlan={() => setShowPlans(true)} toast={toast} onBack={() => { setResult(null); setTab("tests"); }} />
         ) : tab === "plans" ? (
           <section className="fade-in">
             <div className="section-head">
-              <div><span className="eyebrow">TRANSPARENT PRICING</span><h1>Choose Your Mock Test Pack</h1><p className="muted-sm">Buy credits once and use them across any exam paper with non-repeating random questions.</p></div>
+              <div><span className="eyebrow">TRANSPARENT PRICING</span><h1>Choose Your Mock Test Pack</h1><p className="muted-sm">Buy credits once and unlock <b>Saved Questions ⭐</b> + non-repeating mock tests across any exam.</p></div>
             </div>
             <div className="plans-grid">
               {plans.map(plan => {
@@ -250,23 +275,73 @@ export default function App() {
                 <p className="muted-sm" style={{ margin: "8px 0 16px" }}>Bookmark tricky questions during tests for quick revision before exams.</p>
                 <button className="btn btn-primary" onClick={() => setAuthModal({ mode: "login" })}>Sign In →</button>
               </div>
+            ) : !isPaidUser ? (
+              <div className="panel" style={{ textAlign: "center", padding: 36 }}>
+                <span className="eyebrow">PRO FEATURE 🔒</span>
+                <h2>Saved Questions is for Paid Users</h2>
+                <p className="muted-sm" style={{ margin: "8px 0 18px" }}>Buy any Paper Pack (starting at ₹25) to unlock unlimited question bookmarking and revision bank.</p>
+                <button className="btn btn-primary" onClick={() => setShowPlans(true)}>Unlock with Paper Plan →</button>
+              </div>
             ) : (
               <>
                 <div className="section-head"><div><span className="eyebrow">REVISION BANK</span><h1>Saved Questions ⭐ ({bookmarks.length})</h1></div></div>
                 <div className="stack">
-                  {bookmarks.map((q, i) => (
-                    <article key={q.id} className="review-card ok">
+                  {bookmarks.map((qItem, i) => (
+                    <article key={qItem.id} className="review-card ok">
                       <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
-                        <div className="review-q">{i + 1}. {q.question_text}</div>
-                        <button className="btn btn-outline btn-sm" onClick={async () => { await api(`/api/bookmarks/${encodeURIComponent(q.id)}`, { method: "DELETE" }); setBookmarks(b => b.filter(x => x.id !== q.id)); toast("Removed."); }}>Remove</button>
+                        <div className="review-q">{i + 1}. {qItem.question_text}</div>
+                        <button className="btn btn-outline btn-sm" onClick={async () => { await api(`/api/bookmarks/${encodeURIComponent(qItem.id)}`, { method: "DELETE" }); setBookmarks(b => b.filter(x => x.id !== qItem.id)); toast("Removed."); }}>Remove</button>
                       </div>
-                      <div className="review-ans">Correct Answer: <b className="text-green">{q.correct_option} ({q[`option_${String(q.correct_option || "a").toLowerCase()}`]})</b></div>
-                      {q.explanation && <div className="explain">💡 {q.explanation}</div>}
+                      <div className="review-ans">Correct Answer: <b className="text-green">{qItem.correct_option} ({qItem[`option_${String(qItem.correct_option || "a").toLowerCase()}`]})</b></div>
+                      {qItem.explanation && <div className="explain">💡 {qItem.explanation}</div>}
                     </article>
                   ))}
                   {!bookmarks.length && <div className="panel" style={{ textAlign: "center", padding: 28 }}>No saved questions yet. Tap <b>☆ Save</b> during any test or review!</div>}
                 </div>
               </>
+            )}
+          </section>
+        ) : tab === "profile" ? (
+          <section className="fade-in">
+            {!user ? (
+              <div className="panel" style={{ textAlign: "center", padding: 36 }}>
+                <h2>Sign in to manage your Profile</h2>
+                <p className="muted-sm" style={{ margin: "8px 0 16px" }}>Set your State &amp; District, check Paper Credits, and manage your account.</p>
+                <button className="btn btn-primary" onClick={() => setAuthModal({ mode: "login" })}>Sign In / Create Account →</button>
+              </div>
+            ) : (
+              <div className="grid-2">
+                <div className="panel">
+                  <span className="eyebrow">MY PROFILE</span>
+                  <h2 style={{ marginBottom: 14 }}>Personal &amp; Location Details</h2>
+                  <form className="stack" onSubmit={saveProfile}>
+                    <label className="field"><span>Full Name</span><input className="ctrl" name="name" defaultValue={user.name} required /></label>
+                    <label className="field"><span>Email Address</span><input className="ctrl" value={user.email} disabled /></label>
+                    <label className="field"><span>State</span>
+                      <select className="ctrl" name="state" defaultValue={user.state || ""}>
+                        <option value="">Select your State</option>
+                        {STATES_IN.map(st => <option key={st} value={st}>{st}</option>)}
+                      </select>
+                    </label>
+                    <label className="field"><span>District / City</span><input className="ctrl" name="city" defaultValue={user.city || ""} placeholder="e.g. Bhiwani, Rohtak, Hisar" /></label>
+                    <button className="btn btn-primary" type="submit" disabled={savingProfile}>{savingProfile ? "Saving…" : "Save Profile ✓"}</button>
+                  </form>
+                </div>
+                <div className="panel" style={{ display: "flex", flexDirection: "column", justifyContent: "space-between", gap: 16 }}>
+                  <div>
+                    <span className="eyebrow">ACCOUNT STATUS</span>
+                    <h2 style={{ marginBottom: 12 }}>Credits &amp; Plan</h2>
+                    <div className="kpi-grid">
+                      <div className="kpi"><span>Paper Credits</span><b>{credits}</b><small>Available tests</small></div>
+                      <div className="kpi"><span>Account Tier</span><b>{isPaidUser ? "PRO ⭐" : "FREE"}</b><small>{isPaidUser ? "Saved Questions unlocked" : "Buy a plan for Pro"}</small></div>
+                    </div>
+                  </div>
+                  <div className="stack">
+                    <button className="btn btn-primary full" onClick={() => setShowPlans(true)}>Buy More Paper Credits →</button>
+                    <button className="btn btn-outline full" style={{ color: "var(--red)" }} onClick={async () => { await api("/api/auth/logout", { method: "POST", body: "{}" }); setUser(null); setAttempts([]); setBookmarks([]); setTab("tests"); toast("Logged out."); }}>Logout</button>
+                  </div>
+                </div>
+              </div>
             )}
           </section>
         ) : tab === "attempts" ? (
@@ -295,7 +370,7 @@ export default function App() {
               <div className="hero-copy">
                 <span className="hero-pill">{freeOk ? "🎁 1ST MOCK PAPER FREE" : credits > 0 ? `🎟 ${credits} PAPER CREDITS READY` : "⚡ SMART EXAM PREP"}</span>
                 <h1>Crack Govt &amp; Board Exams on <em>{siteName}</em></h1>
-                <p>Every attempt draws 25 fresh non-repeating questions from our 1,000+ bank with live ranking, result audio celebration &amp; detailed solutions.</p>
+                <p>Every attempt draws 25 fresh non-repeating questions with live ranking, result sound celebration &amp; detailed solutions.</p>
                 <div className="hero-cta">
                   <button className="btn btn-white btn-lg" onClick={() => papers[0] && startPaper(papers[0].id)}>
                     {freeOk ? "Start 1st Free Test →" : "Start Mock Test →"}
@@ -311,44 +386,47 @@ export default function App() {
               </div>
             </section>
 
-            <div className="cat-bar">
-              {cats.map(c => (
-                <button key={c} className={`cat-chip ${cat === c ? "active" : ""}`} onClick={() => setCat(c)}>
-                  {c === "all" ? "All Exams" : c}
-                </button>
-              ))}
+            <div className="papers-toolbar">
+              <div className="cat-bar" style={{ padding: 0 }}>
+                {cats.map(c => (
+                  <button key={c} className={`cat-chip ${cat === c ? "active" : ""}`} onClick={() => setCat(c)}>
+                    {c === "all" ? "All Exams" : c}
+                  </button>
+                ))}
+              </div>
+              <input className="ctrl paper-search" type="search" placeholder="🔍 Search exam paper…" value={paperSearch} onChange={e => setPaperSearch(e.target.value)} />
             </div>
 
-            <div className="papers-grid">
+            <div className="papers-grid compact-grid">
               {visiblePapers.map(p => {
                 const canStartFree = freeOk;
                 const hasCreds = credits > 0;
-                const statusBadge = canStartFree ? "1st Paper Free" : hasCreds ? "Use 1 Credit" : `From ₹${Math.min(...(plans.length ? plans.map(x => x.priceInr) : [25]))}`;
+                const statusBadge = canStartFree ? "1st Free" : hasCreds ? "1 Credit" : `From ₹${Math.min(...(plans.length ? plans.map(x => x.priceInr) : [25]))}`;
                 return (
-                  <article key={p.id} className="paper-card">
+                  <article key={p.id} className="paper-card compact-card">
                     <div className="card-top">
                       <span className="pill">{p.category}</span>
                       <span className={`pill ${canStartFree || hasCreds ? "good" : ""}`}>{statusBadge}</span>
                     </div>
                     <h3>{p.title}</h3>
-                    <p>{p.description || "Timed objective mock test with live leaderboard."}</p>
                     <div className="meta-row">
-                      <span>⏱ {p.durationMinutes} Mins</span>
-                      <span>❓ {p.questionsPerAttempt} Random Qs</span>
-                      <span>📚 {p.totalBankQuestions} in Bank</span>
+                      <span>⏱ {p.durationMinutes}m</span>
+                      <span>❓ {p.questionsPerAttempt} Qs</span>
+                      <span>📚 {p.totalBankQuestions} Bank</span>
                     </div>
                     {p.sponsorName && (
                       <div className="sponsor-box">
-                        <span>Sponsored by <b>{p.sponsorName}</b>{p.sponsorTagline ? ` · ${p.sponsorTagline}` : ""}</span>
+                        <span>By <b>{p.sponsorName}</b></span>
                         {p.sponsorLink && <a href={p.sponsorLink} target="_blank" rel="noopener noreferrer">Visit →</a>}
                       </div>
                     )}
-                    <button className="btn btn-primary full" disabled={p.totalBankQuestions === 0 || startingPaperId === p.id} onClick={() => startPaper(p.id)}>
-                      {startingPaperId === p.id ? <><span className="spinner" /> Starting…</> : p.totalBankQuestions === 0 ? "Questions Coming Soon" : canStartFree ? "Start Free Test →" : hasCreds ? "Start Test (1 Credit) →" : "Unlock with Plan →"}
+                    <button className="btn btn-primary btn-sm full" style={{ marginTop: "auto" }} disabled={p.totalBankQuestions === 0 || startingPaperId === p.id} onClick={() => startPaper(p.id)}>
+                      {startingPaperId === p.id ? <><span className="spinner" /> Starting…</> : p.totalBankQuestions === 0 ? "Coming Soon" : canStartFree ? "Start Free →" : hasCreds ? "Start (1 Credit) →" : "Unlock Plan →"}
                     </button>
                   </article>
                 );
               })}
+              {!visiblePapers.length && <div className="panel" style={{ gridColumn: "1/-1", textAlign: "center" }}>No matching exam papers found.</div>}
             </div>
           </div>
         )}
@@ -359,8 +437,8 @@ export default function App() {
           <button className={tab === "tests" && !result ? "active" : ""} onClick={() => { setResult(null); setTab("tests"); }}>Tests</button>
           <button className={tab === "plans" && !result ? "active" : ""} onClick={() => { setResult(null); setTab("plans"); }}>Plans</button>
           <button className={tab === "leaderboard" && !result ? "active" : ""} onClick={() => { setResult(null); setTab("leaderboard"); }}>Ranks</button>
-          <button className={tab === "attempts" && !result ? "active" : ""} onClick={() => { setResult(null); setTab("attempts"); }}>Scores</button>
           <button className={tab === "saved" && !result ? "active" : ""} onClick={() => { setResult(null); setTab("saved"); }}>Saved ⭐</button>
+          <button className={tab === "profile" && !result ? "active" : ""} onClick={() => { setResult(null); setTab("profile"); }}>Profile</button>
         </nav>
       )}
 

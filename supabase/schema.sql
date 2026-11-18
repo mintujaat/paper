@@ -19,6 +19,7 @@ create table if not exists public.quiz_users (
   updated_at timestamptz not null default now()
 );
 alter table public.quiz_users add column if not exists paper_credits integer not null default 0 check (paper_credits >= 0);
+alter table public.quiz_users add column if not exists state text not null default '';
 create unique index if not exists quiz_users_email_lower_uidx on public.quiz_users (lower(email));
 create unique index if not exists quiz_users_google_sub_uidx on public.quiz_users (google_sub) where google_sub is not null;
 

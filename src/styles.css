@@ -213,3 +213,45 @@ th { font-size: 10px; text-transform: uppercase; letter-spacing: .8px; color: va
   .topbar, .mobile-dock, .result-actions, .btn { display: none !important; }
   body { background: #fff; color: #000; }
 }
+
+/* Compact Paper Cards & Search Toolbar */
+.papers-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 18px 0 12px;
+  flex-wrap: wrap;
+}
+.paper-search {
+  max-width: 280px;
+  min-height: 38px;
+}
+.papers-grid.compact-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+.paper-card.compact-card {
+  padding: 15px;
+  border-radius: 14px;
+  gap: 9px;
+}
+.paper-card.compact-card h3 {
+  font-size: 15px;
+  line-height: 1.3;
+}
+.paper-card.compact-card .meta-row {
+  font-size: 11px;
+  gap: 9px;
+}
+.paper-card.compact-card .sponsor-box {
+  padding: 6px 10px;
+  font-size: 11px;
+}
+@media (max-width: 980px) {
+  .papers-grid.compact-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 600px) {
+  .papers-grid.compact-grid { grid-template-columns: 1fr; }
+  .paper-search { max-width: 100%; }
+}

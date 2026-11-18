@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { api } from "../api.js";
 import { playResultSound } from "../sound.js";
 
-export default function ResultView({ result, siteName, onBack, toast }) {
+export default function ResultView({ result, siteName, isPaidUser, onRequirePlan, onBack, toast }) {
   const [saved, setSaved] = useState({});
 
   useEffect(() => {
@@ -10,6 +10,11 @@ export default function ResultView({ result, siteName, onBack, toast }) {
   }, []);
 
   async function saveQ(qid) {
+    if (!isPaidUser) {
+      toast("Save Questions is a Pro feature. Buy any Paper Plan to unlock!", "error");
+      if (onRequirePlan) onRequirePlan();
+      return;
+    }
     try {
       await api(`/api/bookmarks/${encodeURIComponent(qid)}`, { method: "POST", body: "{}" });
       setSaved(p => ({ ...p, [qid]: true }));
@@ -45,7 +50,7 @@ export default function ResultView({ result, siteName, onBack, toast }) {
             <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start" }}>
               <div className="review-q">Q{i + 1}. {item.question_text}</div>
               <button className="btn btn-outline btn-sm" disabled={saved[item.id]} onClick={() => saveQ(item.id)}>
-                {saved[item.id] ? "⭐ Saved" : "☆ Save"}
+                {!isPaidUser ? "🔒 Save" : saved[item.id] ? "⭐ Saved" : "☆ Save"}
               </button>
             </div>
             <div className="review-ans">

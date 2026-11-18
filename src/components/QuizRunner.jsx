@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { api } from "../api.js";
 
-export default function QuizRunner({ quiz, onSubmitted, toast }) {
+export default function QuizRunner({ quiz, isPaidUser, onRequirePlan, onSubmitted, toast }) {
   const [qIndex, setQIndex] = useState(0);
   const [answers, setAnswers] = useState({});
   const [savedIds, setSavedIds] = useState({});
@@ -59,6 +59,11 @@ export default function QuizRunner({ quiz, onSubmitted, toast }) {
   }
 
   async function toggleSave(qid) {
+    if (!isPaidUser) {
+      toast("Save Questions is a Pro feature. Buy any Paper Plan to unlock!", "error");
+      if (onRequirePlan) onRequirePlan();
+      return;
+    }
     const isSaved = Boolean(savedIds[qid]);
     setSavedIds(prev => ({ ...prev, [qid]: !isSaved }));
     try {
@@ -102,7 +107,7 @@ export default function QuizRunner({ quiz, onSubmitted, toast }) {
             <span className="pill">{q.topic || "General"}</span>
             <div style={{ display: "flex", gap: 6 }}>
               <button className="btn btn-outline btn-sm" onClick={() => toggleSave(q.id)}>
-                {savedIds[q.id] ? "⭐ Saved" : "☆ Save"}
+                {!isPaidUser ? "🔒 Save" : savedIds[q.id] ? "⭐ Saved" : "☆ Save"}
               </button>
               <button className="btn btn-outline btn-sm" disabled={reporting} onClick={() => reportQuestion(q.id)}>
                 {reporting ? "…" : "🚩 Report"}
