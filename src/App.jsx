@@ -222,6 +222,10 @@ export default function App() {
       setAuthModal({ mode: "login", after: () => startPaper(paperId) });
       return;
     }
+    if (!config?.freeEligible && Number(user?.paperCredits || 0) <= 0) {
+      setShowPlans(true);
+      return;
+    }
     if (startingPaperId) return;
     setStartingPaperId(paperId);
     try {
@@ -656,7 +660,7 @@ export default function App() {
           </section>
         ) : (
           <div className="fade-in stack" style={{ gap: 20 }}>
-            <section className="hero-surface">
+            <section className="hero-surface compact-hero">
               <div className="hero-main">
                 <span className="hero-badge">
                   {freeOk ? "1ST MOCK TEST FREE" : credits > 0 ? `${credits} CREDITS AVAILABLE` : "SMART EXAM PREP"}
@@ -667,10 +671,10 @@ export default function App() {
                   instant rank, and step-by-step solutions.
                 </p>
                 <div className="hero-cta">
-                  <button className="btn btn-primary btn-lg" onClick={() => papers[0] && startPaper(papers[0].id)}>
+                  <button className="btn btn-primary" onClick={() => papers[0] && startPaper(papers[0].id)}>
                     {freeOk ? "Start Free Mock Test →" : "Start Mock Test →"}
                   </button>
-                  <button className="btn btn-outline btn-lg" onClick={() => setTab("plans")}>
+                  <button className="btn btn-outline" onClick={() => setTab("plans")}>
                     View Plans (From ₹{minPlanPrice})
                   </button>
                 </div>

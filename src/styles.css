@@ -400,3 +400,62 @@ th { font-size: 10.5px; text-transform: uppercase; letter-spacing: .8px; color: 
   .topbar, .mobile-dock, .result-actions, .btn { display: none !important; }
   body { background: #fff; color: #000; }
 }
+
+/* Compact Hero Variant */
+.hero-surface.compact-hero {
+  padding: 18px 22px;
+  gap: 16px;
+  border-radius: 16px;
+}
+.hero-surface.compact-hero .hero-badge { margin-bottom: 6px; padding: 3px 9px; }
+.hero-surface.compact-hero h1 { font-size: clamp(19px, 2.2vw, 25px); margin-bottom: 6px; }
+.hero-surface.compact-hero p { font-size: 13px; margin-bottom: 12px; line-height: 1.45; }
+.hero-surface.compact-hero .hero-highlights { gap: 8px; }
+.hero-surface.compact-hero .hl-item { padding: 10px 12px; border-radius: 11px; }
+.hero-surface.compact-hero .hl-item b { font-size: 12.5px; margin-bottom: 1px; }
+.hero-surface.compact-hero .hl-item span { font-size: 11px; }
+
+/* Compact Zero-Scroll Payment Popup */
+.modal-card.modal-compact-plans {
+  width: min(680px, 100%);
+  padding: 20px;
+  gap: 12px;
+}
+.modal-plan-head h2 { font-size: 20px; }
+.modal-plan-head .muted-sm { font-size: 12.5px; margin-top: 2px; }
+.modal-plans-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+.m-plan-card {
+  background: var(--soft);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 12px;
+}
+.m-plan-card.featured {
+  background: var(--surface);
+  border: 2px solid var(--primary);
+  box-shadow: var(--shadow-sm);
+}
+.m-plan-top { display: flex; justify-content: space-between; align-items: center; gap: 6px; flex-wrap: wrap; }
+.m-plan-top h3 { font-size: 14px; }
+.m-plan-meta { display: flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--muted); margin-top: 4px; font-weight: 600; }
+.m-per { color: var(--green); font-weight: 700; }
+.m-plan-buy { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-top: 8px; border-top: 1px solid var(--line); }
+.m-price { font: 700 22px "Space Grotesk", sans-serif; color: var(--text); }
+
+@media (max-width: 720px) {
+  .hero-surface.compact-hero { padding: 14px 16px; gap: 12px; }
+  .hero-surface.compact-hero .hero-highlights { display: none; }
+  .modal-card.modal-compact-plans { padding: 16px; gap: 10px; }
+  .modal-plans-grid { grid-template-columns: 1fr; gap: 8px; }
+  .m-plan-card { flex-direction: row; align-items: center; padding: 11px 13px; gap: 10px; }
+  .m-plan-buy { border-top: 0; padding-top: 0; flex: 0 0 auto; }
+  .m-price { font-size: 19px; }
+}

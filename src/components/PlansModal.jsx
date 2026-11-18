@@ -37,25 +37,41 @@ export default function PlansModal({ plans, config, user, onClose, onPurchased, 
 
   return (
     <div className="modal-backdrop" onClick={e => e.target === e.currentTarget && onClose()}>
-      <section className="modal-card modal-wide">
+      <section className="modal-card modal-compact-plans">
         <button className="modal-x" onClick={onClose} aria-label="Close">×</button>
-        <span className="eyebrow">CHOOSE A MOCK TEST PACK</span>
-        <h2>Unlock More Mock Papers</h2>
-        <p className="muted-sm">Credits work across any exam (HSSC, Police, SSC, Board) with fresh non-repeating questions.</p>
+        <div className="modal-plan-head">
+          <span className="eyebrow" style={{ marginBottom: 2 }}>PAPER PACKS</span>
+          <h2>Unlock Mock Papers</h2>
+          <p className="muted-sm">Includes <b>Saved Questions ⭐</b> &amp; lifetime valid credits.</p>
+        </div>
 
-        <div className="plans-grid">
+        <div className="modal-plans-grid">
           {plans.map(plan => {
             const perPaper = (plan.priceInr / Math.max(1, plan.papersCount)).toFixed(0);
             const isPopular = plan.papersCount === 5 || /popular|best/i.test(plan.badge);
             return (
-              <article key={plan.id} className={`plan-card ${isPopular ? "featured" : ""}`}>
-                {plan.badge && <span className="plan-badge">{plan.badge}</span>}
-                <h3>{plan.title}</h3>
-                <div className="plan-price"><b>₹{plan.priceInr}</b><span>/ {plan.papersCount} {plan.papersCount === 1 ? "Paper" : "Papers"}</span></div>
-                <small className="plan-unit">Only ₹{perPaper} per mock test</small>
-                <button className={`btn ${isPopular ? "btn-primary" : "btn-outline"} full`} disabled={Boolean(busyId)} onClick={() => buyPlan(plan)}>
-                  {busyId === plan.id ? <><span className="spinner" /> Opening…</> : `Buy ${plan.papersCount} ${plan.papersCount === 1 ? "Paper" : "Papers"} →`}
-                </button>
+              <article key={plan.id} className={`m-plan-card ${isPopular ? "featured" : ""}`}>
+                <div className="m-plan-info">
+                  <div className="m-plan-top">
+                    <h3>{plan.title}</h3>
+                    {plan.badge && <span className={`plan-badge ${isPopular ? "hot" : ""}`}>{plan.badge}</span>}
+                  </div>
+                  <div className="m-plan-meta">
+                    <span>{plan.papersCount} {plan.papersCount === 1 ? "Paper" : "Papers"}</span>
+                    <span>·</span>
+                    <span className="m-per">₹{perPaper}/paper</span>
+                  </div>
+                </div>
+                <div className="m-plan-buy">
+                  <b className="m-price">₹{plan.priceInr}</b>
+                  <button
+                    className={`btn btn-sm ${isPopular ? "btn-primary" : "btn-outline"}`}
+                    disabled={Boolean(busyId)}
+                    onClick={() => buyPlan(plan)}
+                  >
+                    {busyId === plan.id ? <span className="spinner" /> : "Buy →"}
+                  </button>
+                </div>
               </article>
             );
           })}
