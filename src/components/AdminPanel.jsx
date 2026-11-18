@@ -51,32 +51,51 @@ export default function AdminPanel({ toast, onExit }) {
     e.preventDefault();
     if (aiRunning) return;
     const fd = new FormData(e.currentTarget);
-    const target = Number(fd.get("targetTotal") || 25);
-    const batchSize = 25;
+    const target = Math.max(1, Number(fd.get("targetTotal") || 10));
+    const batchSize = Math.max(1, Math.min(25, Number(fd.get("batchSize") || 10)));
     setAiRunning(true);
     stopAiRef.current = false;
     let totalAdded = 0; let batch = 0;
+    const maxBatches = Math.ceil(target / batchSize) + 8;
     try {
-      while (totalAdded < target && !stopAiRef.current && batch < Math.ceil(target / batchSize) + 4) {
+      while (totalAdded < target && !stopAiRef.current && batch < maxBatches) {
         batch++;
         const need = Math.min(batchSize, target - totalAdded);
-        setAiStatus(`Batch ${batch}: Generating ${need} questions via ${fd.get("provider")}… (Saved: ${totalAdded}/${target})`);
-        const res = await api("/api/admin/questions/ai-generate", {
-          method: "POST",
-          body: JSON.stringify({
-            paperId: fd.get("paperId"), provider: fd.get("provider"), apiKey: fd.get("apiKey"),
-            model: fd.get("model"), topic: fd.get("topic"), language: fd.get("language"),
-            difficulty: fd.get("difficulty"), count: need
-          })
-        });
-        totalAdded += Number(res.inserted || 0);
+        setAiStatus(`Batch ${batch}: Generating ${need} Qs via ${fd.get("provider")}… (Saved: ${totalAdded}/${target})`);
+        let res;
+        try {
+          res = await api("/api/admin/questions/ai-generate", {
+            method: "POST",
+            body: JSON.stringify({
+              paperId: fd.get("paperId"), provider: fd.get("provider"), apiKey: fd.get("apiKey"),
+              model: fd.get("model"), topic: fd.get("topic"), language: fd.get("language"),
+              difficulty: fd.get("difficulty"), count: need
+            })
+          });
+        } catch (err) {
+          if (/429|quota|rate|limit/i.test(err.message) && !stopAiRef.current) {
+            setAiStatus(`Rate limit hit — waiting 4s before retry… (Saved: ${totalAdded}/${target})`);
+            await new Promise(r => setTimeout(r, 4000));
+            res = await api("/api/admin/questions/ai-generate", {
+              method: "POST",
+              body: JSON.stringify({
+                paperId: fd.get("paperId"), provider: fd.get("provider"), apiKey: fd.get("apiKey"),
+                model: fd.get("model"), topic: fd.get("topic"), language: fd.get("language"),
+                difficulty: fd.get("difficulty"), count: need
+              })
+            });
+          } else { throw err; }
+        }
+        const addedNow = Number(res?.inserted || 0);
+        totalAdded += addedNow;
+        setAiStatus(`Batch ${batch} saved +${addedNow} Qs! Total saved: ${totalAdded}/${target}`);
       }
       const msg = `Completed! Added ${totalAdded} unique questions to Supabase.`;
       setAiStatus(msg);
       toast(msg, "success");
       loadTab("ai");
     } catch (err) {
-      setAiStatus(`Stopped at ${totalAdded} questions. Error: ${err.message}`);
+      setAiStatus(`Saved ${totalAdded} questions so far. Stopped: ${err.message}`);
       toast(err.message, "error");
     } finally { setAiRunning(false); }
   }
@@ -207,7 +226,11 @@ export default function AdminPanel({ toast, onExit }) {
                 </div>
                 <div className="grid-2">
                   <label className="field"><span>Difficulty</span><select className="ctrl" name="difficulty"><option value="medium">Medium</option><option value="easy">Easy</option><option value="hard">Hard</option></select></label>
-                  <label className="field"><span>Questions to Add</span><select className="ctrl" name="targetTotal" defaultValue="100"><option value="25">25 Questions</option><option value="50">50 Questions</option><option value="100">100 Questions</option><option value="250">250 Questions</option><option value="500">500 Questions</option><option value="1000">1,000 Questions</option></select></label>
+                  <label className="field"><span>Total Questions to Add</span><select className="ctrl" name="targetTotal" defaultValue="25"><option value="1">1 Question</option><option value="5">5 Questions</option><option value="10">10 Questions</option><option value="15">15 Questions</option><option value="20">20 Questions</option><option value="25">25 Questions</option><option value="50">50 Questions</option><option value="100">100 Questions</option><option value="250">250 Questions</option><option value="500">500 Questions</option><option value="1000">1,000 Questions</option></select></label>
+                </div>
+                <div className="grid-2">
+                  <label className="field"><span>Questions Per API Call (Batch Size)</span><select className="ctrl" name="batchSize" defaultValue="10"><option value="5">5 Qs / call (Safest for Free Gemini)</option><option value="10">10 Qs / call (Recommended)</option><option value="15">15 Qs / call</option><option value="20">20 Qs / call</option><option value="25">25 Qs / call (Fastest)</option></select></label>
+                  <div className="field" style={{ justifyContent: "end" }}><small className="muted-sm">Jitne bhi valid sawal aayenge (chahe 1 hi kyun na ho), turant Supabase mein save ho jayenge.</small></div>
                 </div>
                 {aiStatus && <div className="notice-banner">{aiStatus}</div>}
                 <div style={{ display: "flex", gap: 10 }}>

@@ -643,14 +643,42 @@ app.delete("/api/admin/papers/:id", requireAdmin, async (req, res) => {
 });
 
 // Admin Question Bank & AI Agent Generator -----------------------------------
+function normQText(t) {
+  return String(t || "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+}
+
 function extractJsonArray(rawText) {
   let s = String(rawText || "").trim();
   const fence = s.match(/```(?:json)?\s*([\s\S]*?)```/i);
   if (fence) s = fence[1].trim();
   const start = s.indexOf("[");
   const end = s.lastIndexOf("]");
-  if (start === -1 || end === -1 || end <= start) throw new Error("AI response did not contain a valid JSON array.");
-  return JSON.parse(s.slice(start, end + 1));
+  if (start !== -1 && end !== -1 && end > start) {
+    try { return JSON.parse(s.slice(start, end + 1)); } catch {}
+  }
+  // Partial recovery: extract all complete {...} objects even if response was truncated
+  const objs = [];
+  let depth = 0, inStr = false, esc = false, objStart = -1;
+  for (let i = Math.max(0, start); i < s.length; i++) {
+    const ch = s[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (ch === "\\") esc = true;
+      else if (ch === "\"") inStr = false;
+      continue;
+    }
+    if (ch === "\"") { inStr = true; continue; }
+    if (ch === "{") { if (depth === 0) objStart = i; depth++; }
+    else if (ch === "}") {
+      depth--;
+      if (depth === 0 && objStart !== -1) {
+        try { objs.push(JSON.parse(s.slice(objStart, i + 1))); } catch {}
+        objStart = -1;
+      }
+    }
+  }
+  if (objs.length) return objs;
+  throw new Error("AI response did not contain valid JSON questions.");
 }
 
 async function callAiAgent({ provider, apiKey, model, prompt }) {
@@ -701,7 +729,7 @@ app.post("/api/admin/questions/ai-generate", requireAdmin, async (req, res) => {
     const topic = String(req.body?.topic || "Full Syllabus").trim().slice(0, 120);
     const language = String(req.body?.language || "Bilingual (English + Hindi)").trim().slice(0, 60);
     const difficulty = ["easy", "medium", "hard"].includes(req.body?.difficulty) ? req.body.difficulty : "medium";
-    const count = Math.max(5, Math.min(35, Math.floor(asNum(req.body?.count, 20))));
+    const count = Math.max(1, Math.min(35, Math.floor(asNum(req.body?.count, 10))));
 
     if (!paperId || !apiKey) return res.status(400).json({ error: "Select a paper and enter your AI API key." });
     const { data: paper } = await supa(db.from("quiz_papers").select("*").eq("id", paperId).maybeSingle());
@@ -718,7 +746,7 @@ Return ONLY a JSON array of objects, each with exact keys:
     const parsed = extractJsonArray(raw);
 
     const { data: existing } = await supa(db.from("quiz_questions").select("question_text").eq("paper_id", paperId).limit(2000));
-    const seenTexts = new Set((existing || []).map(x => String(x.question_text || "").trim().toLowerCase()));
+    const seenTexts = new Set((existing || []).map(x => normQText(x.question_text)));
 
     const rows = [];
     for (const item of parsed) {
@@ -729,8 +757,9 @@ Return ONLY a JSON array of objects, each with exact keys:
       const od = String(item?.option_d || "").trim();
       const co = String(item?.correct_option || "").trim().toUpperCase();
       if (!qt || !oa || !ob || !oc || !od || !["A", "B", "C", "D"].includes(co)) continue;
-      if (seenTexts.has(qt.toLowerCase())) continue;
-      seenTexts.add(qt.toLowerCase());
+      const nq = normQText(qt);
+      if (!nq || seenTexts.has(nq)) continue;
+      seenTexts.add(nq);
       rows.push({
         paper_id: paperId, question_text: qt, option_a: oa, option_b: ob, option_c: oc, option_d: od,
         correct_option: co, explanation: String(item?.explanation || "").trim().slice(0, 600),
