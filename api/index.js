@@ -25,7 +25,7 @@ const ADMIN_COOKIE = "mintu_quiz_admin";
 const FREE_COOKIE = "mintu_quiz_free_used";
 const SESSION_SECRET = String(process.env.SESSION_SECRET || "");
 const ADMIN_PASSWORD = String(process.env.ADMIN_PASSWORD || "");
-const SITE_NAME = String(process.env.SITE_NAME || "Mintu Exam Hub").trim().slice(0, 60);
+const SITE_NAME = String(process.env.SITE_NAME || "YaadPage").trim().slice(0, 60);
 const TELEGRAM_BOT_TOKEN = String(process.env.TELEGRAM_BOT_TOKEN || "").trim();
 const TELEGRAM_CHANNEL_ID = String(process.env.TELEGRAM_CHANNEL_ID || "").trim();
 
@@ -107,7 +107,7 @@ async function notifyTelegramAdmin(htmlMessage) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ chat_id: TELEGRAM_CHANNEL_ID, text: htmlMessage, parse_mode: "HTML", disable_web_page_preview: true }),
-      signal: AbortSignal.timeout(2500)
+      signal: AbortSignal.timeout(1500)
     });
   } catch (err) { console.error("Telegram notify error:", err?.message || err); }
 }
@@ -289,26 +289,28 @@ app.get("/api/auth/me", async (req, res) => {
 app.post("/api/auth/logout", (_req, res) => { clearCookie(res, SESSION_COOKIE); res.json({ ok: true }); });
 
 // Public Papers & Leaderboards -----------------------------------------------
-app.get("/api/papers", async (req, res) => {
+app.get("/api/papers", async (_req, res) => {
   try {
-    const user = userFromReq(req);
-    const [{ data: papers }, { data: qCounts }, paidRes] = await Promise.all([
+    const [papersRes, rpcRes] = await Promise.all([
       supa(db.from("quiz_papers").select("*").eq("active", true).order("created_at", { ascending: true })),
-      supa(db.from("quiz_questions").select("paper_id").eq("active", true)),
-      user ? supa(db.from("quiz_payments").select("paper_id").eq("user_id", user.uid).eq("status", "paid").is("used_for_attempt_id", null)) : Promise.resolve({ data: [] })
+      db.rpc("quiz_paper_counts")
     ]);
     const counts = new Map();
-    for (const q of qCounts || []) counts.set(q.paper_id, (counts.get(q.paper_id) || 0) + 1);
-    const unlockedSet = new Set((paidRes.data || []).map(p => p.paper_id));
+    if (!rpcRes.error && Array.isArray(rpcRes.data)) {
+      for (const row of rpcRes.data) counts.set(row.paper_id, Number(row.cnt || 0));
+    } else {
+      const { data: qCounts } = await supa(db.from("quiz_questions").select("paper_id").eq("active", true));
+      for (const q of qCounts || []) counts.set(q.paper_id, (counts.get(q.paper_id) || 0) + 1);
+    }
+    res.set("Cache-Control", "public, max-age=20, stale-while-revalidate=90");
     res.json({
-      papers: (papers || []).map(p => ({
+      papers: (papersRes.data || []).map(p => ({
         id: p.id, title: p.title, category: p.category, description: p.description,
         durationMinutes: Number(p.duration_minutes || 15),
         questionsPerAttempt: Number(p.questions_per_attempt || 25),
         priceInr: Number(p.price_inr || 25),
         totalBankQuestions: counts.get(p.id) || 0,
-        sponsorName: p.sponsor_name || "", sponsorTagline: p.sponsor_tagline || "", sponsorLink: p.sponsor_link || "",
-        hasPaidPass: unlockedSet.has(p.id)
+        sponsorName: p.sponsor_name || "", sponsorTagline: p.sponsor_tagline || "", sponsorLink: p.sponsor_link || ""
       }))
     });
   } catch (e) { res.status(500).json({ error: errorText(e) }); }
@@ -317,6 +319,7 @@ app.get("/api/papers", async (req, res) => {
 app.get("/api/papers/:id/leaderboard", async (req, res) => {
   try {
     const { data } = await supa(db.from("quiz_attempts").select("user_name,user_city,score,total_questions,accuracy_percent,time_taken_sec,submitted_at").eq("paper_id", req.params.id).eq("status", "completed").order("score", { ascending: false }).order("time_taken_sec", { ascending: true }).limit(20));
+    res.set("Cache-Control", "public, max-age=15, stale-while-revalidate=60");
     res.json({ leaderboard: data || [] });
   } catch (e) { res.status(500).json({ error: errorText(e) }); }
 });
@@ -325,6 +328,7 @@ app.get("/api/papers/:id/leaderboard", async (req, res) => {
 app.get("/api/plans", async (_req, res) => {
   try {
     const { data } = await supa(db.from("quiz_plans").select("*").eq("active", true).order("sort_order", { ascending: true }).order("price_inr", { ascending: true }));
+    res.set("Cache-Control", "public, max-age=30, stale-while-revalidate=120");
     res.json({ plans: (data || []).map(p => ({ id: p.id, title: p.title, papersCount: Number(p.papers_count), priceInr: Number(p.price_inr), badge: p.badge || "" })) });
   } catch (e) { res.status(500).json({ error: errorText(e) }); }
 });
@@ -398,17 +402,20 @@ app.post("/api/attempts/start", requireUser, async (req, res) => {
       });
     }
 
-    const { data: allQuestions } = await supa(db.from("quiz_questions").select("id,question_text,option_a,option_b,option_c,option_d,topic,difficulty").eq("paper_id", paper.id).eq("active", true));
-    if (!allQuestions || !allQuestions.length) return res.status(409).json({ error: "No questions loaded in this paper yet. Ask admin to generate questions." });
-
-    // Exclude previously seen questions for this user on this paper
-    const { data: prevAttempts } = await supa(db.from("quiz_attempts").select("question_ids").eq("user_id", req.user.uid).eq("paper_id", paper.id));
+    const [{ data: allQIds }, { data: prevAttempts }] = await Promise.all([
+      supa(db.from("quiz_questions").select("id").eq("paper_id", paper.id).eq("active", true)),
+      supa(db.from("quiz_attempts").select("question_ids").eq("user_id", req.user.uid).eq("paper_id", paper.id).limit(40))
+    ]);
+    if (!allQIds || !allQIds.length) return res.status(409).json({ error: "No questions loaded in this paper yet. Ask admin to generate questions." });
     const seen = new Set();
     for (const a of prevAttempts || []) for (const qid of (Array.isArray(a.question_ids) ? a.question_ids : [])) seen.add(qid);
-    const unseen = shuffle(allQuestions.filter(q => !seen.has(q.id)));
-    const seenPool = shuffle(allQuestions.filter(q => seen.has(q.id)));
-    const needed = Math.min(Number(paper.questions_per_attempt || 25), allQuestions.length);
-    const picked = [...unseen, ...seenPool].slice(0, needed);
+    const unseenIds = shuffle(allQIds.filter(q => !seen.has(q.id)).map(q => q.id));
+    const seenIds = shuffle(allQIds.filter(q => seen.has(q.id)).map(q => q.id));
+    const needed = Math.min(Number(paper.questions_per_attempt || 25), allQIds.length);
+    const pickedIds = [...unseenIds, ...seenIds].slice(0, needed);
+    const { data: pickedRows } = await supa(db.from("quiz_questions").select("id,question_text,option_a,option_b,option_c,option_d,topic,difficulty").in("id", pickedIds));
+    const rowMap = new Map((pickedRows || []).map(r => [r.id, r]));
+    const picked = pickedIds.map(id => rowMap.get(id)).filter(Boolean);
 
     const { data: attempt } = await supa(db.from("quiz_attempts").insert({
       user_id: req.user.uid, paper_id: paper.id, user_name: userRow.name, user_email: userRow.email,
@@ -446,10 +453,11 @@ app.post("/api/attempts/:id/submit", requireUser, async (req, res) => {
   try {
     const { data: attempt } = await supa(db.from("quiz_attempts").select("*").eq("id", req.params.id).eq("user_id", req.user.uid).maybeSingle());
     if (!attempt) return res.status(404).json({ error: "Test attempt not found." });
-    if (attempt.status === "completed") return res.status(409).json({ error: "This test is already submitted." });
-
     const qIds = Array.isArray(attempt.question_ids) ? attempt.question_ids : [];
-    const userAnswers = req.body?.answers && typeof req.body.answers === "object" ? req.body.answers : {};
+    const alreadyDone = attempt.status === "completed";
+    const userAnswers = alreadyDone
+      ? (attempt.answers && typeof attempt.answers === "object" ? attempt.answers : {})
+      : (req.body?.answers && typeof req.body.answers === "object" ? req.body.answers : {});
     const { data: qRows } = await supa(db.from("quiz_questions").select("*").in("id", qIds));
     const qMap = new Map((qRows || []).map(q => [q.id, q]));
 
@@ -468,18 +476,21 @@ app.post("/api/attempts/:id/submit", requireUser, async (req, res) => {
     }).filter(Boolean);
 
     const total = review.length || attempt.total_questions || 1;
-    const accuracy = Math.round((score / total) * 10000) / 100;
-    const elapsed = Math.max(1, Math.floor((Date.now() - new Date(attempt.started_at).getTime()) / 1000));
+    const accuracy = alreadyDone ? Number(attempt.accuracy_percent || 0) : Math.round((score / total) * 10000) / 100;
+    const elapsed = alreadyDone ? Number(attempt.time_taken_sec || 1) : Math.max(1, Math.floor((Date.now() - new Date(attempt.started_at).getTime()) / 1000));
 
-    await supa(db.from("quiz_attempts").update({
-      answers: userAnswers, score, total_questions: total, accuracy_percent: accuracy,
-      time_taken_sec: elapsed, status: "completed", submitted_at: new Date().toISOString()
-    }).eq("id", attempt.id));
+    if (!alreadyDone) {
+      await supa(db.from("quiz_attempts").update({
+        answers: userAnswers, score, total_questions: total, accuracy_percent: accuracy,
+        time_taken_sec: elapsed, status: "completed", submitted_at: new Date().toISOString()
+      }).eq("id", attempt.id));
+    }
 
-    const { count: betterCount } = await db.from("quiz_attempts").select("id", { count: "exact", head: true }).eq("paper_id", attempt.paper_id).eq("status", "completed").gt("score", score);
-    const rank = Number(betterCount || 0) + 1;
-
-    await notifyTelegramAdmin(`📝 <b>Mock Test Submitted</b>\n👤 <b>${escTg(attempt.user_name)}</b> (${escTg(attempt.user_city || "India")})\n📚 Paper: <b>${escTg(attempt.paper_id)}</b>\n🏆 Score: <b>${score}/${total}</b> (${accuracy}%) · Rank #${rank}`);
+    const [rankRes] = await Promise.all([
+      db.from("quiz_attempts").select("id", { count: "exact", head: true }).eq("paper_id", attempt.paper_id).eq("status", "completed").gt("score", score),
+      alreadyDone ? Promise.resolve() : notifyTelegramAdmin(`📝 <b>Mock Test Submitted</b>\n👤 <b>${escTg(attempt.user_name)}</b> (${escTg(attempt.user_city || "India")})\n📚 Paper: <b>${escTg(attempt.paper_id)}</b>\n🏆 Score: <b>${score}/${total}</b> (${accuracy}%)`)
+    ]);
+    const rank = Number(rankRes?.count || 0) + 1;
     res.json({ ok: true, score, total, accuracy, timeTakenSec: elapsed, rank, review });
   } catch (e) { res.status(500).json({ error: errorText(e) }); }
 });
@@ -490,6 +501,33 @@ app.post("/api/questions/:id/report", requireUser, async (req, res) => {
     if (!q) return res.status(404).json({ error: "Question not found." });
     await supa(db.from("quiz_questions").update({ reported_count: Number(q.reported_count || 0) + 1 }).eq("id", q.id));
     await notifyTelegramAdmin(`🚩 <b>Question Reported</b>\n📚 Paper: ${escTg(q.paper_id)}\n❓ ${escTg(q.question_text.slice(0, 180))}\n👤 By: ${escTg(req.user.email)}`);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: errorText(e) }); }
+});
+
+
+// Student Bookmarks (Save Questions for Revision) ----------------------------
+app.get("/api/bookmarks", requireUser, async (req, res) => {
+  try {
+    const { data: bms } = await supa(db.from("quiz_bookmarks").select("question_id,paper_id,created_at").eq("user_id", req.user.uid).order("created_at", { ascending: false }).limit(100));
+    const list = bms || [];
+    if (!list.length) return res.json({ bookmarks: [] });
+    const { data: qs } = await supa(db.from("quiz_questions").select("*").in("id", list.map(b => b.question_id)));
+    const qMap = new Map((qs || []).map(q => [q.id, q]));
+    res.json({ bookmarks: list.map(b => ({ ...qMap.get(b.question_id), savedAt: b.created_at })).filter(q => q?.id) });
+  } catch (e) { res.status(500).json({ error: errorText(e) }); }
+});
+app.post("/api/bookmarks/:questionId", requireUser, async (req, res) => {
+  try {
+    const { data: q } = await supa(db.from("quiz_questions").select("id,paper_id").eq("id", req.params.questionId).maybeSingle());
+    if (!q) return res.status(404).json({ error: "Question not found." });
+    await supa(db.from("quiz_bookmarks").upsert({ user_id: req.user.uid, question_id: q.id, paper_id: q.paper_id }, { onConflict: "user_id,question_id", ignoreDuplicates: true }));
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: errorText(e) }); }
+});
+app.delete("/api/bookmarks/:questionId", requireUser, async (req, res) => {
+  try {
+    await supa(db.from("quiz_bookmarks").delete().eq("user_id", req.user.uid).eq("question_id", req.params.questionId));
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: errorText(e) }); }
 });

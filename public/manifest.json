@@ -1,12 +1,12 @@
 {
-  "name": "Mintu Exam Hub \u2014 Mock Tests",
-  "short_name": "Exam Hub",
-  "description": "Free & affordable 15-minute mock tests for HSSC, SSC, Police and Board exams.",
+  "name": "YaadPage \u2014 Smart Mock Tests",
+  "short_name": "YaadPage",
+  "description": "Fast 15-minute mock tests for HSSC, Haryana Police, SSC and Board exams. First paper free!",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "background_color": "#f4f6fb",
-  "theme_color": "#2563eb",
+  "theme_color": "#4f46e5",
   "icons": [
     {
       "src": "/icon-192.png",

@@ -130,7 +130,7 @@ create index if not exists quiz_attempts_paper_score_idx on public.quiz_attempts
 
 create table if not exists public.quiz_settings (
   id text primary key,
-  site_name text not null default 'Mintu Exam Hub',
+  site_name text not null default 'YaadPage',
   free_papers_per_device integer not null default 1,
   default_paper_price numeric(10,2) not null default 25,
   announcement_enabled boolean not null default false,
@@ -141,7 +141,7 @@ create table if not exists public.quiz_settings (
   updated_at timestamptz not null default now()
 );
 insert into public.quiz_settings (id, site_name, free_papers_per_device, default_paper_price)
-values ('main', 'Mintu Exam Hub', 1, 25)
+values ('main', 'YaadPage', 1, 25)
 on conflict (id) do nothing;
 
 create or replace function public.quiz_increment_visitor()
@@ -247,5 +247,34 @@ select * from (values
 ('hssc-cet', 'Which shortcut key is used to copy selected text in Windows?', 'Ctrl + X', 'Ctrl + C', 'Ctrl + V', 'Ctrl + Z', 'B', 'Ctrl + C copies selected text.', 'Computer', 'easy')
 ) as v(paper_id, question_text, option_a, option_b, option_c, option_d, correct_option, explanation, topic, difficulty)
 where not exists (select 1 from public.quiz_questions where paper_id = 'hssc-cet');
+
+notify pgrst, 'reload schema';
+
+-- Fast paper question counts RPC (avoids transferring thousands of rows)
+create or replace function public.quiz_paper_counts()
+returns table(paper_id text, cnt integer)
+language sql security definer set search_path = public
+as $$
+  select paper_id, count(*)::integer as cnt
+  from public.quiz_questions
+  where active = true
+  group by paper_id;
+$$;
+revoke all on function public.quiz_paper_counts() from public, anon, authenticated;
+grant execute on function public.quiz_paper_counts() to service_role;
+
+-- Student Saved / Bookmarked Questions for Revision
+create table if not exists public.quiz_bookmarks (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.quiz_users(id) on delete cascade,
+  question_id uuid not null references public.quiz_questions(id) on delete cascade,
+  paper_id text not null,
+  created_at timestamptz not null default now(),
+  unique(user_id, question_id)
+);
+create index if not exists quiz_bookmarks_user_idx on public.quiz_bookmarks (user_id, created_at desc);
+alter table public.quiz_bookmarks enable row level security;
+revoke all on public.quiz_bookmarks from public, anon, authenticated;
+grant all on public.quiz_bookmarks to service_role;
 
 notify pgrst, 'reload schema';

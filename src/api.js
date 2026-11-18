@@ -1,17 +1,38 @@
-export async function api(url, opts = {}) {
-  const r = await fetch(url, {
-    credentials: "same-origin",
-    ...opts,
-    headers: { "Content-Type": "application/json", ...(opts.headers || {}) }
-  });
-  const data = await r.json().catch(() => ({}));
-  if (!r.ok) {
-    const err = new Error(data.error || `Request failed (${r.status})`);
-    err.data = data;
-    err.status = r.status;
-    throw err;
+export async function api(url, opts = {}, retries = 2) {
+  let lastErr;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const r = await fetch(url, {
+        credentials: "same-origin",
+        ...opts,
+        headers: { "Content-Type": "application/json", ...(opts.headers || {}) }
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        if ([502, 503, 504].includes(r.status) && attempt < retries) {
+          await new Promise(res => setTimeout(res, 350 * (attempt + 1)));
+          continue;
+        }
+        const err = new Error(data.error || `Request failed (${r.status})`);
+        err.data = data;
+        err.status = r.status;
+        throw err;
+      }
+      return data;
+    } catch (e) {
+      lastErr = e;
+      const isNetworkDrop = e?.name === "TypeError" || /load failed|failed to fetch|network/i.test(String(e?.message || ""));
+      if (isNetworkDrop && attempt < retries) {
+        await new Promise(res => setTimeout(res, 350 * (attempt + 1)));
+        continue;
+      }
+      if (isNetworkDrop) {
+        throw new Error("Connection weak or interrupted. Please check your internet and try again.");
+      }
+      throw e;
+    }
   }
-  return data;
+  throw lastErr;
 }
 
 export function getDeviceMeta() {

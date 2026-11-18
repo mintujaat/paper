@@ -200,3 +200,16 @@ th { font-size: 10px; text-transform: uppercase; letter-spacing: .8px; color: va
   .mobile-dock button.active { background: var(--primary-soft); color: var(--primary); }
   .toast { bottom: 80px; }
 }
+
+.result-hero.celebrate {
+  animation: pop-celebrate .55s cubic-bezier(.2,.8,.2,1) both;
+}
+@keyframes pop-celebrate {
+  0% { transform: scale(.96); opacity: 0; }
+  65% { transform: scale(1.015); }
+  100% { transform: scale(1); opacity: 1; }
+}
+@media print {
+  .topbar, .mobile-dock, .result-actions, .btn { display: none !important; }
+  body { background: #fff; color: #000; }
+}

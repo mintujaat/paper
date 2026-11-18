@@ -112,7 +112,7 @@ export default function AdminPanel({ toast, onExit }) {
   return (
     <div className="admin-shell">
       <aside className="admin-side">
-        <div className="brand"><span className="logo-mark">Q</span><div><b>Exam Hub</b><small>ADMIN PANEL</small></div></div>
+        <div className="brand"><span className="logo-mark">Y</span><div><b>YaadPage</b><small>ADMIN PANEL</small></div></div>
         <div className="admin-nav">
           {navItems.map(([id, label]) => (
             <button key={id} className={`admin-nav-btn ${tab === id ? "active" : ""}`} onClick={() => setTab(id)}>{label}</button>
@@ -326,7 +326,7 @@ export default function AdminPanel({ toast, onExit }) {
               await api("/api/admin/settings", { method: "PUT", body: JSON.stringify({ siteName: fd.get("siteName"), freePapersPerDevice: Number(fd.get("freePapersPerDevice")), defaultPaperPrice: Number(fd.get("defaultPaperPrice")), announcementEnabled: fd.get("announcementEnabled") === "on", announcementText: fd.get("announcementText") }) });
               loadTab("settings"); toast("Settings saved!", "success");
             }}>
-              <label className="field"><span>Site Name</span><input className="ctrl" name="siteName" defaultValue={set.siteName || "Mintu Exam Hub"} required /></label>
+              <label className="field"><span>Site Name</span><input className="ctrl" name="siteName" defaultValue={set.siteName || "YaadPage"} required /></label>
               <div className="grid-2">
                 <label className="field"><span>Free Papers Per Device</span><input className="ctrl" type="number" name="freePapersPerDevice" defaultValue={set.freePapersPerDevice ?? 1} required /></label>
                 <label className="field"><span>Default Single Price (₹)</span><input className="ctrl" type="number" name="defaultPaperPrice" defaultValue={set.defaultPaperPrice ?? 25} required /></label>
