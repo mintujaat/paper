@@ -406,16 +406,24 @@ app.post("/api/attempts/start", requireUser, async (req, res) => {
     }
 
     const [{ data: allQIds }, { data: prevAttempts }] = await Promise.all([
-      supa(db.from("quiz_questions").select("id").eq("paper_id", paper.id).eq("active", true)),
+      supa(db.from("quiz_questions").select("id,question_text").eq("paper_id", paper.id).eq("active", true)),
       supa(db.from("quiz_attempts").select("question_ids").eq("user_id", req.user.uid).eq("paper_id", paper.id).limit(40))
     ]);
     if (!allQIds || !allQIds.length) return res.status(409).json({ error: "No questions loaded in this paper yet. Ask admin to generate questions." });
     const seen = new Set();
     for (const a of prevAttempts || []) for (const qid of (Array.isArray(a.question_ids) ? a.question_ids : [])) seen.add(qid);
-    const unseenIds = shuffle(allQIds.filter(q => !seen.has(q.id)).map(q => q.id));
-    const seenIds = shuffle(allQIds.filter(q => seen.has(q.id)).map(q => q.id));
+    const unseenPool = shuffle(allQIds.filter(q => !seen.has(q.id)));
+    const seenPool = shuffle(allQIds.filter(q => seen.has(q.id)));
     const needed = Math.min(Number(paper.questions_per_attempt || 25), allQIds.length);
-    const pickedIds = [...unseenIds, ...seenIds].slice(0, needed);
+    const pickedIds = [];
+    const usedNormTexts = new Set();
+    for (const q of [...unseenPool, ...seenPool]) {
+      if (pickedIds.length >= needed) break;
+      const nq = normQText(q.question_text);
+      if (nq && usedNormTexts.has(nq)) continue;
+      if (nq) usedNormTexts.add(nq);
+      pickedIds.push(q.id);
+    }
     const { data: pickedRows } = await supa(db.from("quiz_questions").select("id,question_text,option_a,option_b,option_c,option_d,topic,difficulty").in("id", pickedIds));
     const rowMap = new Map((pickedRows || []).map(r => [r.id, r]));
     const picked = pickedIds.map(id => rowMap.get(id)).filter(Boolean);
