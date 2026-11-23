@@ -325,6 +325,8 @@ app.get("/api/papers/:id/leaderboard", async (req, res) => {
     const { data } = await supa(db.from("quiz_attempts").select("user_name,user_city,score,total_questions,accuracy_percent,time_taken_sec,submitted_at").eq("paper_id", req.params.id).eq("status", "completed").order("score", { ascending: false }).order("time_taken_sec", { ascending: true }).limit(20));
     res.set("Cache-Control", "public, max-age=15, stale-while-revalidate=60");
     res.json({ leaderboard: data || [] });
+  } catch (e) { res.status(500).json({ error: errorText(e) }); }
+});
 
 app.get("/api/papers/:id/topics", async (req, res) => {
   try {
@@ -351,13 +353,13 @@ app.post("/api/suggestions", async (req, res) => {
     const category = String(req.body?.category || "New Paper Request").trim().slice(0, 60);
     const message = String(req.body?.message || "").trim().slice(0, 1000);
     if (message.length < 5) return res.status(400).json({ error: "Please write at least 5 characters in your suggestion." });
-    await supa(db.from("quiz_suggestions").insert({
-      user_id: ck?.uid || null, user_name: name, user_email: email, category, message, status: "new"
-    }));
+    try {
+      await supa(db.from("quiz_suggestions").insert({
+        user_id: ck?.uid || null, user_name: name, user_email: email, category, message, status: "new"
+      }));
+    } catch {}
     await notifyTelegramAdmin(`💡 <b>New Student Suggestion</b>\n📂 Category: <b>${escTg(category)}</b>\n👤 From: <b>${escTg(name)}</b> ${email ? `(<code>${escTg(email)}</code>)` : ""}\n💬 ${escTg(message)}`);
     res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: errorText(e) }); }
-});
   } catch (e) { res.status(500).json({ error: errorText(e) }); }
 });
 
