@@ -13,6 +13,10 @@ export default function AdminPanel({ toast, onExit }) {
   const [qFilter, setQFilter] = useState("");
   const [aiRunning, setAiRunning] = useState(false);
   const [aiStatus, setAiStatus] = useState("");
+  const [bulkText, setBulkText] = useState("");
+  const [bulkPaperId, setBulkPaperId] = useState("");
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkStatus, setBulkStatus] = useState("");
   const stopAiRef = useRef(false);
 
   async function loadTab(t = tab) {
@@ -98,6 +102,99 @@ export default function AdminPanel({ toast, onExit }) {
       setAiStatus(`Saved ${totalAdded} questions so far. Stopped: ${err.message}`);
       toast(err.message, "error");
     } finally { setAiRunning(false); }
+  }
+
+  function parseBulkQuestions(raw) {
+    const txt = String(raw || "").trim();
+    if (!txt) return [];
+    // 1) Try JSON array
+    if (txt.startsWith("[") || txt.includes("\"question_text\"")) {
+      try {
+        const a = txt.indexOf("[");
+        const b = txt.lastIndexOf("]");
+        const arr = JSON.parse(a !== -1 && b > a ? txt.slice(a, b + 1) : txt);
+        if (Array.isArray(arr)) return arr;
+      } catch {}
+    }
+    // 2) Try CSV (header: question_text,option_a,option_b,option_c,option_d,correct_option,...)
+    const lines = txt.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    if (lines.length >= 2 && lines[0].includes(",") && /option_a|question/i.test(lines[0])) {
+      const splitCsv = line => {
+        const out = []; let cur = ""; let q = false;
+        for (let i = 0; i < line.length; i++) {
+          const ch = line[i];
+          if (ch === "\"") { if (q && line[i + 1] === "\"") { cur += "\""; i++; } else q = !q; }
+          else if (ch === "," && !q) { out.push(cur.trim()); cur = ""; }
+          else cur += ch;
+        }
+        out.push(cur.trim());
+        return out;
+      };
+      const hdr = splitCsv(lines[0]).map(h => h.toLowerCase());
+      const out = [];
+      for (let i = 1; i < lines.length; i++) {
+        const cols = splitCsv(lines[i]);
+        const row = {};
+        hdr.forEach((h, idx) => { row[h] = cols[idx] || ""; });
+        if (row.question_text && row.option_a) out.push(row);
+      }
+      if (out.length) return out;
+    }
+    // 3) Plain text Q/A/B/C/D/Ans parser
+    const blocks = txt.split(/\n(?=\s*(?:Q\.?\s*\d+|\d+[.)])\s+)/i);
+    const parsed = [];
+    for (const blk of blocks) {
+      const bl = blk.split(/\r?\n/).map(x => x.trim()).filter(Boolean);
+      if (bl.length < 5) continue;
+      let qt = bl[0].replace(/^(?:Q\.?\s*\d+|\d+[.)])\s*/i, "").trim();
+      const opts = {}; let ans = ""; let exp = "";
+      for (let i = 1; i < bl.length; i++) {
+        const l = bl[i];
+        const mOpt = l.match(/^\(?([A-D])\)?[.):-]\s*(.+)$/i);
+        const mAns = l.match(/^(?:Ans(?:wer)?|Correct)\s*[:\-]\s*\(?([A-D])\)?/i);
+        const mExp = l.match(/^(?:Exp(?:lanation)?|Sol(?:ution)?)\s*[:\-]\s*(.+)$/i);
+        if (mOpt) opts[mOpt[1].toUpperCase()] = mOpt[2].trim();
+        else if (mAns) ans = mAns[1].toUpperCase();
+        else if (mExp) exp = mExp[1].trim();
+        else if (!opts.A) qt += " " + l;
+      }
+      if (qt && opts.A && opts.B && opts.C && opts.D && ["A","B","C","D"].includes(ans)) {
+        parsed.push({ question_text: qt, option_a: opts.A, option_b: opts.B, option_c: opts.C, option_d: opts.D, correct_option: ans, explanation: exp });
+      }
+    }
+    return parsed;
+  }
+
+  async function handleBulkImport(e) {
+    e.preventDefault();
+    if (bulkBusy) return;
+    const pid = bulkPaperId || papers[0]?.id || "";
+    if (!pid) return toast("Create a paper first.", "error");
+    const parsed = parseBulkQuestions(bulkText);
+    if (!parsed.length) return toast("Could not detect valid questions. Check JSON, CSV, or Q/A/B/C/D/Ans format.", "error");
+    setBulkBusy(true);
+    let inserted = 0; let skipped = 0;
+    const chunkSize = 250;
+    try {
+      for (let i = 0; i < parsed.length; i += chunkSize) {
+        const chunk = parsed.slice(i, i + chunkSize);
+        setBulkStatus(`Uploading ${Math.min(i + chunk.length, parsed.length)} / ${parsed.length} questions…`);
+        const res = await api("/api/admin/questions/bulk", {
+          method: "POST",
+          body: JSON.stringify({ paperId: pid, questions: chunk })
+        });
+        inserted += Number(res.inserted || 0);
+        skipped += Number(res.skippedDuplicates || 0);
+      }
+      const msg = `Imported ${inserted} unique questions! (${skipped} duplicates skipped)`;
+      setBulkStatus(msg);
+      toast(msg, "success");
+      setBulkText("");
+      loadTab("questions");
+    } catch (err) {
+      setBulkStatus(`Stopped: ${err.message}`);
+      toast(err.message, "error");
+    } finally { setBulkBusy(false); }
   }
 
   if (authed === null) return <div className="boot"><span className="spinner" /><p>Checking admin session…</p></div>;
@@ -281,13 +378,68 @@ export default function AdminPanel({ toast, onExit }) {
         )}
 
         {tab === "questions" && (
+          <div className="stack">
+            <div className="panel">
+              <div className="admin-head" style={{ marginBottom: 8 }}>
+                <div>
+                  <h3>⚡ Bulk Import 1,000+ Questions (Zero API Key)</h3>
+                  <small className="muted-sm">Upload CSV / JSON / TXT file OR paste questions directly from free ChatGPT / Gemini Web.</small>
+                </div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <button type="button" className="btn btn-outline btn-sm" onClick={() => {
+                    const pTitle = papers.find(x => x.id === (bulkPaperId || papers[0]?.id))?.title || "HSSC / SSC Exam";
+                    const promptTxt = `Generate 100 unique MCQs for "${pTitle}" in Bilingual (English + Hindi) as a JSON array with exact keys: question_text, option_a, option_b, option_c, option_d, correct_option (A/B/C/D), explanation, topic. Output ONLY valid JSON.`;
+                    navigator.clipboard?.writeText(promptTxt);
+                    toast("Prompt copied! Paste it in free ChatGPT/Gemini web, then paste output below.", "success");
+                  }}>📋 Copy Free AI Prompt</button>
+                  <button type="button" className="btn btn-outline btn-sm" onClick={() => {
+                    const sample = "question_text,option_a,option_b,option_c,option_d,correct_option,explanation,topic\n\"When was Haryana formed?\",\"1 Nov 1966\",\"15 Aug 1947\",\"26 Jan 1950\",\"1 Nov 1967\",\"A\",\"Haryana was carved out of Punjab on 1 Nov 1966.\",\"Haryana GK\"";
+                    const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([sample], { type: "text/csv" })); a.download = "yaadpage_sample.csv"; a.click();
+                  }}>⬇ Sample CSV</button>
+                </div>
+              </div>
+              <form className="stack" onSubmit={handleBulkImport}>
+                <div className="grid-2">
+                  <label className="field"><span>Target Paper</span>
+                    <select className="ctrl" value={bulkPaperId || papers[0]?.id || ""} onChange={e => setBulkPaperId(e.target.value)}>
+                      {papers.map(p => <option key={p.id} value={p.id}>{p.title} ({p.questionCount} Qs)</option>)}
+                    </select>
+                  </label>
+                  <label className="field"><span>Upload .csv / .json / .txt File</span>
+                    <input className="ctrl" type="file" accept=".csv,.json,.txt" style={{ paddingTop: 8 }} onChange={async e => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      const txt = await file.text();
+                      setBulkText(txt);
+                      toast(`Loaded ${file.name} (${parseBulkQuestions(txt).length} questions detected)`, "success");
+                    }} />
+                  </label>
+                </div>
+                <textarea className="ctrl" rows={5} style={{ padding: 12, minHeight: 110 }} value={bulkText} onChange={e => setBulkText(e.target.value)} placeholder="Paste JSON, CSV, or plain text (1. Question? A) ... B) ... C) ... D) ... Ans: A)" />
+                {bulkStatus && <div className="notice-banner">{bulkStatus}</div>}
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                  <small className="muted-sm">Detected: <b>{parseBulkQuestions(bulkText).length}</b> valid questions (auto-splits in 250-Q batches &amp; skips duplicates)</small>
+                  <button className="btn btn-primary" type="submit" disabled={bulkBusy || !bulkText.trim()}>
+                    {bulkBusy ? "Importing…" : "Import Questions to Supabase →"}
+                  </button>
+                </div>
+              </form>
+            </div>
+
           <div className="panel">
             <div className="admin-head" style={{ marginBottom: 12 }}>
               <h3>Question Bank (Latest 200)</h3>
-              <select className="ctrl" style={{ maxWidth: 240 }} value={qFilter} onChange={e => setQFilter(e.target.value)}>
-                <option value="">All Papers</option>
-                {papers.map(p => <option key={p.id} value={p.id}>{p.title}</option>)}
-              </select>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <button className="btn btn-outline btn-sm" onClick={async () => {
+                  const res = await api("/api/admin/questions/dedup", { method: "POST", body: JSON.stringify({ paperId: qFilter }) });
+                  toast(`Removed ${res.removed || 0} duplicate questions!`, "success");
+                  loadTab("questions");
+                }}>🧹 Clean Duplicates</button>
+                <select className="ctrl" style={{ maxWidth: 220 }} value={qFilter} onChange={e => setQFilter(e.target.value)}>
+                  <option value="">All Papers</option>
+                  {papers.map(p => <option key={p.id} value={p.id}>{p.title}</option>)}
+                </select>
+              </div>
             </div>
             <div className="table-wrap"><table><thead><tr><th>Question</th><th>Paper</th><th>Ans</th><th>Reports</th><th>Action</th></tr></thead><tbody>
               {questions.map(q => (
@@ -300,6 +452,7 @@ export default function AdminPanel({ toast, onExit }) {
                 </tr>
               ))}
             </tbody></table></div>
+          </div>
           </div>
         )}
 

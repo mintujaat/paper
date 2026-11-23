@@ -785,7 +785,10 @@ app.post("/api/admin/questions/bulk", requireAdmin, async (req, res) => {
     const paperId = String(req.body?.paperId || "").trim();
     const list = Array.isArray(req.body?.questions) ? req.body.questions : [];
     if (!paperId || !list.length) return res.status(400).json({ error: "Paper ID and questions array required." });
+    const { data: existing } = await supa(db.from("quiz_questions").select("question_text").eq("paper_id", paperId).limit(5000));
+    const seenTexts = new Set((existing || []).map(x => normQText(x.question_text)));
     const rows = [];
+    let skipped = 0;
     for (const item of list.slice(0, 500)) {
       const qt = String(item?.question_text || "").trim();
       const oa = String(item?.option_a || "").trim();
@@ -794,6 +797,9 @@ app.post("/api/admin/questions/bulk", requireAdmin, async (req, res) => {
       const od = String(item?.option_d || "").trim();
       const co = String(item?.correct_option || "").trim().toUpperCase();
       if (!qt || !oa || !ob || !oc || !od || !["A", "B", "C", "D"].includes(co)) continue;
+      const nq = normQText(qt);
+      if (!nq || seenTexts.has(nq)) { skipped++; continue; }
+      seenTexts.add(nq);
       rows.push({
         paper_id: paperId, question_text: qt, option_a: oa, option_b: ob, option_c: oc, option_d: od,
         correct_option: co, explanation: String(item?.explanation || "").trim().slice(0, 600),
@@ -801,9 +807,29 @@ app.post("/api/admin/questions/bulk", requireAdmin, async (req, res) => {
         difficulty: ["easy", "medium", "hard"].includes(item?.difficulty) ? item.difficulty : "medium", active: true
       });
     }
-    if (!rows.length) return res.status(400).json({ error: "No valid questions found in JSON." });
+    if (!rows.length) return res.json({ ok: true, inserted: 0, skippedDuplicates: skipped });
     await supa(db.from("quiz_questions").insert(rows));
-    res.json({ ok: true, inserted: rows.length });
+    res.json({ ok: true, inserted: rows.length, skippedDuplicates: skipped });
+  } catch (e) { res.status(500).json({ error: errorText(e) }); }
+});
+
+app.post("/api/admin/questions/dedup", requireAdmin, async (req, res) => {
+  try {
+    const paperId = String(req.body?.paperId || "").trim();
+    let q = db.from("quiz_questions").select("id,paper_id,question_text,created_at").order("created_at", { ascending: true }).limit(5000);
+    if (paperId) q = q.eq("paper_id", paperId);
+    const { data } = await supa(q);
+    const seen = new Set();
+    const dupIds = [];
+    for (const row of data || []) {
+      const key = `${row.paper_id}::${normQText(row.question_text)}`;
+      if (seen.has(key)) dupIds.push(row.id);
+      else seen.add(key);
+    }
+    for (let i = 0; i < dupIds.length; i += 200) {
+      await supa(db.from("quiz_questions").delete().in("id", dupIds.slice(i, i + 200)));
+    }
+    res.json({ ok: true, removed: dupIds.length });
   } catch (e) { res.status(500).json({ error: errorText(e) }); }
 });
 
