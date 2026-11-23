@@ -1,8 +1,10 @@
 import React, { useEffect, useRef, useState } from "react";
-import { api } from "../api.js";
+import { api, getDeviceMeta } from "../api.js";
 
 export default function AdminPanel({ toast, onExit }) {
   const [authed, setAuthed] = useState(null);
+  const [blocked, setBlocked] = useState(() => { try { return localStorage.getItem("yaadpage_adm_blocked") === "1"; } catch { return false; } });
+  const [loginErr, setLoginErr] = useState("");
   const [tab, setTab] = useState("overview");
   const [overview, setOverview] = useState(null);
   const [papers, setPapers] = useState([]);
@@ -10,6 +12,7 @@ export default function AdminPanel({ toast, onExit }) {
   const [questions, setQuestions] = useState([]);
   const [users, setUsers] = useState([]);
   const [attempts, setAttempts] = useState([]);
+  const [suggestions, setSuggestions] = useState([]);
   const [qFilter, setQFilter] = useState("");
   const [aiRunning, setAiRunning] = useState(false);
   const [aiStatus, setAiStatus] = useState("");
@@ -24,6 +27,7 @@ export default function AdminPanel({ toast, onExit }) {
     if (t === "questions") jobs.push(api(`/api/admin/questions${qFilter ? `?paperId=${encodeURIComponent(qFilter)}` : ""}`));
     if (t === "users") jobs.push(api("/api/admin/users"));
     if (t === "attempts") jobs.push(api("/api/admin/attempts"));
+    if (t === "suggestions") jobs.push(api("/api/admin/suggestions"));
     const res = await Promise.all(jobs);
     setOverview(res[0]);
     setPapers(res[1].papers || []);
@@ -31,24 +35,50 @@ export default function AdminPanel({ toast, onExit }) {
     if (t === "questions") setQuestions(res[3].questions || []);
     if (t === "users") setUsers(res[3].users || []);
     if (t === "attempts") setAttempts(res[3].attempts || []);
+    if (t === "suggestions") setSuggestions(res[3].suggestions || []);
   }
 
   useEffect(() => {
-    api("/api/admin/me").then(r => {
+    if (blocked) { setAuthed(false); return; }
+    const dm = getDeviceMeta();
+    api(`/api/admin/me?deviceId=${encodeURIComponent(dm.deviceId)}`).then(r => {
+      if (r.blocked) {
+        try { localStorage.setItem("yaadpage_adm_blocked", "1"); } catch {}
+        setBlocked(true);
+        setAuthed(false);
+        return;
+      }
       setAuthed(r.authenticated);
       if (r.authenticated) loadTab("overview");
-    }).catch(() => setAuthed(false));
+    }).catch(err => {
+      if (err.status === 403 || err.data?.blocked) {
+        try { localStorage.setItem("yaadpage_adm_blocked", "1"); } catch {}
+        setBlocked(true);
+      }
+      setAuthed(false);
+    });
   }, []);
 
   useEffect(() => { if (authed) loadTab(tab); }, [tab, qFilter]);
 
   async function handleLogin(e) {
     e.preventDefault();
+    if (blocked) return;
+    setLoginErr("");
     try {
-      await api("/api/admin/login", { method: "POST", body: JSON.stringify({ password: new FormData(e.currentTarget).get("password") }) });
+      const dm = getDeviceMeta();
+      await api("/api/admin/login", { method: "POST", body: JSON.stringify({ password: new FormData(e.currentTarget).get("password"), deviceId: dm.deviceId }) });
+      try { localStorage.removeItem("yaadpage_adm_blocked"); } catch {}
       setAuthed(true);
       loadTab("overview");
-    } catch (err) { toast(err.message, "error"); }
+    } catch (err) {
+      if (err.status === 403 || err.data?.blocked) {
+        try { localStorage.setItem("yaadpage_adm_blocked", "1"); } catch {}
+        setBlocked(true);
+      }
+      setLoginErr(err.message);
+      toast(err.message, "error");
+    }
   }
 
   async function handleAiGenerate(e) {
@@ -199,12 +229,26 @@ export default function AdminPanel({ toast, onExit }) {
 
   if (authed === null) return <div className="boot"><span className="spinner" /><p>Checking admin session…</p></div>;
   if (!authed) {
+    if (blocked) {
+      return (
+        <div className="auth-center">
+          <div className="modal-card" style={{ textAlign: "center" }}>
+            <span className="eyebrow" style={{ color: "var(--red)" }}>403 · ACCESS BLOCKED</span>
+            <h2>Admin Panel Locked</h2>
+            <p className="muted-sm">Too many incorrect password attempts (3/3). Your IP address and device are permanently blocked from accessing the Admin Panel.</p>
+            <button type="button" className="btn btn-primary full" onClick={onExit}>← Back to Student Site</button>
+          </div>
+        </div>
+      );
+    }
     return (
       <div className="auth-center">
         <form className="modal-card" onSubmit={handleLogin}>
           <span className="eyebrow">ADMIN WORKSPACE</span>
           <h2>Sign in to Admin</h2>
+          <p className="muted-sm" style={{ marginTop: 0 }}>Max 3 attempts allowed. 3 wrong passwords will block your IP &amp; device.</p>
           <input className="ctrl" type="password" name="password" required placeholder="Enter ADMIN_PASSWORD" />
+          {loginErr && <div className="err">{loginErr}</div>}
           <button className="btn btn-primary btn-lg full" type="submit">Open Dashboard →</button>
           <button type="button" className="btn btn-ghost full" onClick={onExit}>← Back to Student Site</button>
         </form>
@@ -222,6 +266,7 @@ export default function AdminPanel({ toast, onExit }) {
     ["questions", "Question Bank"],
     ["attempts", "Attempts & Leads"],
     ["users", "Students"],
+    ["suggestions", "Suggestions"],
     ["settings", "Settings"]
   ];
 
@@ -496,6 +541,29 @@ export default function AdminPanel({ toast, onExit }) {
                   <td><button className="btn btn-outline btn-sm" onClick={async () => { await api(`/api/admin/users/${encodeURIComponent(u.id)}/status`, { method: "PATCH", body: JSON.stringify({ disabled: !u.disabled }) }); loadTab("users"); }}>{u.disabled ? "Enable" : "Disable"}</button></td>
                 </tr>
               ))}
+            </tbody></table></div>
+          </div>
+        )}
+
+        {tab === "suggestions" && (
+          <div className="panel">
+            <h3>Student Suggestions ({suggestions.length})</h3>
+            <div className="table-wrap"><table><thead><tr><th>Student</th><th>Category</th><th>Suggestion</th><th>Status</th><th>Action</th></tr></thead><tbody>
+              {suggestions.map(sg => (
+                <tr key={sg.id}>
+                  <td><b>{sg.user_name}</b><br /><small>{sg.user_email || "—"}</small></td>
+                  <td><span className="pill">{sg.category}</span></td>
+                  <td style={{ maxWidth: 360 }}>{sg.message}</td>
+                  <td><span className={`pill ${sg.status === "done" ? "good" : ""}`}>{sg.status === "done" ? "Done" : "New"}</span></td>
+                  <td>
+                    {sg.status !== "done" && (
+                      <button className="btn btn-outline btn-sm" onClick={async () => { await api(`/api/admin/suggestions/${encodeURIComponent(sg.id)}`, { method: "PATCH", body: JSON.stringify({ status: "done" }) }); loadTab("suggestions"); }}>Mark Done</button>
+                    )}{" "}
+                    <button className="btn btn-outline btn-sm" style={{ color: "var(--red)" }} onClick={async () => { await api(`/api/admin/suggestions/${encodeURIComponent(sg.id)}`, { method: "DELETE" }); loadTab("suggestions"); }}>Delete</button>
+                  </td>
+                </tr>
+              ))}
+              {!suggestions.length && <tr><td colSpan={5} style={{ textAlign: "center", padding: 24 }}>No suggestions received yet.</td></tr>}
             </tbody></table></div>
           </div>
         )}

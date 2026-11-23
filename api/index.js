@@ -22,6 +22,7 @@ const razorpay = razorpayReady ? new Razorpay({ key_id: process.env.RAZORPAY_KEY
 
 const SESSION_COOKIE = "mintu_quiz_session";
 const ADMIN_COOKIE = "mintu_quiz_admin";
+const ADMIN_LOCK_COOKIE = "yaadpage_adm_lock";
 const FREE_COOKIE = "mintu_quiz_free_used";
 const SESSION_SECRET = String(process.env.SESSION_SECRET || "");
 const ADMIN_PASSWORD = String(process.env.ADMIN_PASSWORD || "");
@@ -324,6 +325,39 @@ app.get("/api/papers/:id/leaderboard", async (req, res) => {
     const { data } = await supa(db.from("quiz_attempts").select("user_name,user_city,score,total_questions,accuracy_percent,time_taken_sec,submitted_at").eq("paper_id", req.params.id).eq("status", "completed").order("score", { ascending: false }).order("time_taken_sec", { ascending: true }).limit(20));
     res.set("Cache-Control", "public, max-age=15, stale-while-revalidate=60");
     res.json({ leaderboard: data || [] });
+
+app.get("/api/papers/:id/topics", async (req, res) => {
+  try {
+    const { data } = await supa(db.from("quiz_questions").select("topic").eq("paper_id", req.params.id).eq("active", true).limit(3000));
+    const counts = {};
+    for (const r of data || []) {
+      const t = String(r.topic || "").trim();
+      if (!t) continue;
+      counts[t] = (counts[t] || 0) + 1;
+    }
+    const topics = Object.entries(counts)
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count);
+    res.json({ topics });
+  } catch (e) { res.status(500).json({ error: errorText(e) }); }
+});
+
+app.post("/api/suggestions", async (req, res) => {
+  try {
+    if (!rateAllowed(req, "suggest", 6)) return res.status(429).json({ error: "Please wait a minute before sending another suggestion." });
+    const ck = unsign(cookie(req, USER_COOKIE));
+    const name = String(req.body?.name || ck?.name || "Student").trim().slice(0, 80) || "Student";
+    const email = String(req.body?.email || ck?.email || "").trim().slice(0, 120);
+    const category = String(req.body?.category || "New Paper Request").trim().slice(0, 60);
+    const message = String(req.body?.message || "").trim().slice(0, 1000);
+    if (message.length < 5) return res.status(400).json({ error: "Please write at least 5 characters in your suggestion." });
+    await supa(db.from("quiz_suggestions").insert({
+      user_id: ck?.uid || null, user_name: name, user_email: email, category, message, status: "new"
+    }));
+    await notifyTelegramAdmin(`💡 <b>New Student Suggestion</b>\n📂 Category: <b>${escTg(category)}</b>\n👤 From: <b>${escTg(name)}</b> ${email ? `(<code>${escTg(email)}</code>)` : ""}\n💬 ${escTg(message)}`);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: errorText(e) }); }
+});
   } catch (e) { res.status(500).json({ error: errorText(e) }); }
 });
 
@@ -405,11 +439,18 @@ app.post("/api/attempts/start", requireUser, async (req, res) => {
       });
     }
 
-    const [{ data: allQIds }, { data: prevAttempts }] = await Promise.all([
-      supa(db.from("quiz_questions").select("id,question_text").eq("paper_id", paper.id).eq("active", true)),
+    const topicFilter = String(req.body?.topicFilter || "").trim();
+    const [{ data: rawQIds }, { data: prevAttempts }] = await Promise.all([
+      supa(db.from("quiz_questions").select("id,question_text,topic").eq("paper_id", paper.id).eq("active", true)),
       supa(db.from("quiz_attempts").select("question_ids").eq("user_id", req.user.uid).eq("paper_id", paper.id).limit(40))
     ]);
-    if (!allQIds || !allQIds.length) return res.status(409).json({ error: "No questions loaded in this paper yet. Ask admin to generate questions." });
+    if (!rawQIds || !rawQIds.length) return res.status(409).json({ error: "No questions loaded in this paper yet. Ask admin to generate questions." });
+    let allQIds = rawQIds;
+    if (topicFilter && topicFilter.toLowerCase() !== "all") {
+      const tf = topicFilter.toLowerCase();
+      const filtered = rawQIds.filter(q => String(q.topic || "").toLowerCase().includes(tf));
+      if (filtered.length) allQIds = filtered;
+    }
     const seen = new Set();
     for (const a of prevAttempts || []) for (const qid of (Array.isArray(a.question_ids) ? a.question_ids : [])) seen.add(qid);
     const unseenPool = shuffle(allQIds.filter(q => !seen.has(q.id)));
@@ -566,12 +607,78 @@ app.delete("/api/bookmarks/:questionId", requireUser, async (req, res) => {
 });
 
 // Admin Auth & Overview ------------------------------------------------------
-app.get("/api/admin/me", (req, res) => res.json({ authenticated: !!unsign(cookie(req, ADMIN_COOKIE))?.admin }));
-app.post("/api/admin/login", (req, res) => {
-  if (!rateAllowed(req, "admin-login", 8)) return res.status(429).json({ error: "Too many attempts." });
+async function getAdminLockState(req, deviceId = "") {
+  const ck = unsign(cookie(req, ADMIN_LOCK_COOKIE));
+  let fails = Number(ck?.fails || 0);
+  let blocked = Boolean(ck?.blocked) || fails >= 3;
+  const ipHash = clientIpHash(req);
+  const dev = String(deviceId || "").trim().slice(0, 120);
+  try {
+    const keys = [`ip:${ipHash}`];
+    if (dev) keys.push(`dev:${dev}`);
+    const { data } = await db.from("quiz_admin_lockouts").select("failed_attempts,blocked").in("id", keys);
+    for (const row of data || []) {
+      fails = Math.max(fails, Number(row.failed_attempts || 0));
+      if (row.blocked || row.failed_attempts >= 3) blocked = true;
+    }
+  } catch {}
+  return { fails, blocked };
+}
+
+async function recordAdminFail(req, res, deviceId = "") {
+  const prev = await getAdminLockState(req, deviceId);
+  const nextFails = prev.fails + 1;
+  const blocked = nextFails >= 3;
+  const ipHash = clientIpHash(req);
+  const dev = String(deviceId || "").trim().slice(0, 120);
+  appendCookie(res, ADMIN_LOCK_COOKIE, sign({ fails: nextFails, blocked, exp: Date.now() + 10 * 365 * 86400000 }), 10 * 365 * 86400);
+  try {
+    const nowIso = new Date().toISOString();
+    const upserts = [{ id: `ip:${ipHash}`, ip_hash: ipHash, device_id: dev, failed_attempts: nextFails, blocked, blocked_at: blocked ? nowIso : null, updated_at: nowIso }];
+    if (dev) upserts.push({ id: `dev:${dev}`, ip_hash: ipHash, device_id: dev, failed_attempts: nextFails, blocked, blocked_at: blocked ? nowIso : null, updated_at: nowIso });
+    await db.from("quiz_admin_lockouts").upsert(upserts);
+  } catch {}
+  if (blocked) {
+    await notifyTelegramAdmin(`🚨 <b>Admin Access Blocked (3/3 Wrong Passwords)</b>\n🌐 IP Hash: <code>${escTg(ipHash)}</code>\n📱 Device: <code>${escTg(dev || "unknown")}</code>\n🕒 ${escTg(istNow())}`);
+  }
+  return { fails: nextFails, blocked };
+}
+
+async function clearAdminLock(req, res, deviceId = "") {
+  clearCookie(res, ADMIN_LOCK_COOKIE);
+  const ipHash = clientIpHash(req);
+  const dev = String(deviceId || "").trim().slice(0, 120);
+  try {
+    const keys = [`ip:${ipHash}`];
+    if (dev) keys.push(`dev:${dev}`);
+    await db.from("quiz_admin_lockouts").delete().in("id", keys);
+  } catch {}
+}
+
+app.get("/api/admin/me", async (req, res) => {
+  const lock = await getAdminLockState(req, req.query?.deviceId);
+  if (lock.blocked) return res.status(403).json({ authenticated: false, blocked: true, error: "Access blocked: 3 failed password attempts." });
+  res.json({ authenticated: !!unsign(cookie(req, ADMIN_COOKIE))?.admin, blocked: false, attemptsLeft: Math.max(0, 3 - lock.fails) });
+});
+
+app.post("/api/admin/login", async (req, res) => {
+  const deviceId = String(req.body?.deviceId || "").trim();
+  const lock = await getAdminLockState(req, deviceId);
+  if (lock.blocked) {
+    clearCookie(res, ADMIN_COOKIE);
+    return res.status(403).json({ blocked: true, error: "Access blocked! 3 wrong attempts detected. Your IP & device are blocked." });
+  }
   const password = String(req.body?.password || "");
   const a = Buffer.from(password); const b = Buffer.from(ADMIN_PASSWORD);
-  if (!ADMIN_PASSWORD || a.length !== b.length || !crypto.timingSafeEqual(a, b)) return res.status(401).json({ error: "Incorrect admin password." });
+  if (!ADMIN_PASSWORD || a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+    const st = await recordAdminFail(req, res, deviceId);
+    if (st.blocked) {
+      return res.status(403).json({ blocked: true, error: "3/3 wrong attempts! Your IP & device are now blocked from the Admin Panel." });
+    }
+    const left = 3 - st.fails;
+    return res.status(401).json({ blocked: false, attemptsLeft: left, error: `Incorrect password. ${left} attempt${left === 1 ? "" : "s"} left before IP & device block.` });
+  }
+  await clearAdminLock(req, res, deviceId);
   appendCookie(res, ADMIN_COOKIE, sign({ admin: true, exp: Date.now() + 12 * 3600000 }), 12 * 3600);
   res.json({ ok: true });
 });
@@ -898,6 +1005,25 @@ app.put("/api/admin/settings", requireAdmin, async (req, res) => {
 
 
 // Admin Paper Plans CRUD -----------------------------------------------------
+app.get("/api/admin/suggestions", requireAdmin, async (_req, res) => {
+  try {
+    const { data } = await supa(db.from("quiz_suggestions").select("*").order("created_at", { ascending: false }).limit(200));
+    res.json({ suggestions: data || [] });
+  } catch (e) { res.status(500).json({ error: errorText(e) }); }
+});
+app.patch("/api/admin/suggestions/:id", requireAdmin, async (req, res) => {
+  try {
+    await supa(db.from("quiz_suggestions").update({ status: String(req.body?.status || "done") }).eq("id", req.params.id));
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: errorText(e) }); }
+});
+app.delete("/api/admin/suggestions/:id", requireAdmin, async (req, res) => {
+  try {
+    await supa(db.from("quiz_suggestions").delete().eq("id", req.params.id));
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: errorText(e) }); }
+});
+
 app.get("/api/admin/plans", requireAdmin, async (_req, res) => {
   try {
     const { data } = await supa(db.from("quiz_plans").select("*").order("sort_order", { ascending: true }).order("price_inr", { ascending: true }));

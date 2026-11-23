@@ -279,3 +279,27 @@ revoke all on public.quiz_bookmarks from public, anon, authenticated;
 grant all on public.quiz_bookmarks to service_role;
 
 notify pgrst, 'reload schema';
+
+create table if not exists quiz_admin_lockouts (
+  id text primary key,
+  ip_hash text not null default '',
+  device_id text not null default '',
+  failed_attempts int not null default 0,
+  blocked boolean not null default false,
+  blocked_at timestamptz,
+  updated_at timestamptz not null default now()
+);
+create index if not exists idx_admin_lock_ip on quiz_admin_lockouts(ip_hash);
+create index if not exists idx_admin_lock_dev on quiz_admin_lockouts(device_id);
+
+create table if not exists quiz_suggestions (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid references quiz_users(id) on delete set null,
+  user_name text not null default 'Student',
+  user_email text not null default '',
+  category text not null default 'New Paper Request',
+  message text not null,
+  status text not null default 'new',
+  created_at timestamptz not null default now()
+);
+create index if not exists idx_suggestions_created on quiz_suggestions(created_at desc);

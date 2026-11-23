@@ -106,6 +106,11 @@ const Icon = {
       <polyline points="20 6 9 17 4 12" />
     </svg>
   ),
+  Suggest: () => (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+    </svg>
+  ),
   Lock: () => (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <rect width="18" height="11" x="3" y="11" rx="2" ry="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" />
@@ -140,6 +145,8 @@ export default function App() {
   const [result, setResult] = useState(null);
   const [startingPaperId, setStartingPaperId] = useState("");
   const [savingProfile, setSavingProfile] = useState(false);
+  const [topicPicker, setTopicPicker] = useState(null);
+  const [sendingSuggest, setSendingSuggest] = useState(false);
   const [toastState, setToastState] = useState({ msg: "", kind: "", show: false });
 
   function toast(msg, kind = "") {
@@ -217,9 +224,9 @@ export default function App() {
     }
   }, [tab, lbPaperId]);
 
-  async function startPaper(paperId) {
+  async function startPaper(paperId, topicFilter = null) {
     if (!user) {
-      setAuthModal({ mode: "login", after: () => startPaper(paperId) });
+      setAuthModal({ mode: "login", after: () => startPaper(paperId, topicFilter) });
       return;
     }
     if (!config?.freeEligible && Number(user?.paperCredits || 0) <= 0) {
@@ -229,8 +236,24 @@ export default function App() {
     if (startingPaperId) return;
     setStartingPaperId(paperId);
     try {
+      if (topicFilter === null) {
+        try {
+          const tRes = await api(`/api/papers/${encodeURIComponent(paperId)}/topics`);
+          const topics = tRes?.topics || [];
+          if (topics.length >= 2) {
+            const paperObj = papers.find(x => x.id === paperId) || { id: paperId, title: "Mock Test" };
+            setTopicPicker({ paper: paperObj, topics });
+            setStartingPaperId("");
+            return;
+          }
+        } catch {}
+      }
+      setTopicPicker(null);
       const dm = getDeviceMeta();
-      const res = await api("/api/attempts/start", { method: "POST", body: JSON.stringify({ paperId, ...dm }) });
+      const res = await api("/api/attempts/start", {
+        method: "POST",
+        body: JSON.stringify({ paperId, topicFilter: topicFilter || "all", ...dm })
+      });
       if (res.isFree) markFreeUsed();
       setResult(null);
       setActiveQuiz(res);
@@ -242,6 +265,20 @@ export default function App() {
         toast(err.message, "error");
       }
     } finally { setStartingPaperId(""); }
+  }
+
+  async function submitSuggestion(e) {
+    e.preventDefault();
+    if (sendingSuggest) return;
+    setSendingSuggest(true);
+    const form = e.currentTarget;
+    const fd = Object.fromEntries(new FormData(form).entries());
+    try {
+      await api("/api/suggestions", { method: "POST", body: JSON.stringify(fd) });
+      form.reset();
+      toast("Thank you! Your suggestion has been sent to Admin.", "success");
+    } catch (err) { toast(err.message, "error"); }
+    finally { setSendingSuggest(false); }
   }
 
   async function saveProfile(e) {
@@ -325,6 +362,9 @@ export default function App() {
               </button>
               <button className={tab === "saved" && !result ? "active" : ""} onClick={() => { setResult(null); setTab("saved"); }}>
                 <Icon.Bookmark /> <span>Saved</span>
+              </button>
+              <button className={tab === "suggest" && !result ? "active" : ""} onClick={() => { setResult(null); setTab("suggest"); }}>
+                <Icon.Suggest /> <span>Suggest</span>
               </button>
             </nav>
           )}
@@ -562,6 +602,7 @@ export default function App() {
                   </div>
                   <div className="profile-quick-actions">
                     <button className="btn btn-outline btn-sm" onClick={() => setTab("attempts")}>My Scores ({attempts.length})</button>
+                    <button className="btn btn-outline btn-sm" onClick={() => setTab("suggest")}>Suggest Paper</button>
                     <button className="btn btn-primary btn-sm" onClick={() => setShowPlans(true)}>Buy Credits</button>
                   </div>
                 </div>
@@ -613,6 +654,37 @@ export default function App() {
                 </div>
               </div>
             )}
+          </section>
+        ) : tab === "suggest" ? (
+          <section className="fade-in" style={{ maxWidth: 640, margin: "0 auto" }}>
+            <div className="panel">
+              <span className="eyebrow">STUDENT FEEDBACK</span>
+              <h1 style={{ fontSize: 24, marginBottom: 6 }}>Suggest a Paper or Feature</h1>
+              <p className="muted-sm" style={{ marginBottom: 16 }}>
+                Want a new exam paper, class-specific questions, or a new feature on {siteName}? Send your suggestion directly to the Admin.
+              </p>
+              <form className="stack" onSubmit={submitSuggestion}>
+                <div className="grid-2">
+                  <label className="field"><span>Your Name</span><input className="ctrl" name="name" defaultValue={user?.name || ""} placeholder="Enter your name" required /></label>
+                  <label className="field"><span>Category</span>
+                    <select className="ctrl" name="category" defaultValue="New Paper Request">
+                      <option>New Paper Request</option>
+                      <option>Class / Topic Filter</option>
+                      <option>Question Correction</option>
+                      <option>App / Feature Idea</option>
+                      <option>Other</option>
+                    </select>
+                  </label>
+                </div>
+                <label className="field"><span>Email (optional)</span><input className="ctrl" type="email" name="email" defaultValue={user?.email || ""} placeholder="you@example.com" /></label>
+                <label className="field"><span>Your Suggestion</span>
+                  <textarea className="ctrl" name="message" rows={4} style={{ padding: 12, minHeight: 110 }} required minLength={5} placeholder="e.g. Please add HSSC Patwari mock test or separate Class 10th Science questions…" />
+                </label>
+                <button className="btn btn-primary" type="submit" disabled={sendingSuggest}>
+                  {sendingSuggest ? "Sending…" : "Send Suggestion to Admin →"}
+                </button>
+              </form>
+            </div>
           </section>
         ) : tab === "attempts" ? (
           <section className="fade-in">
@@ -676,6 +748,9 @@ export default function App() {
                   </button>
                   <button className="btn btn-outline" onClick={() => setTab("plans")}>
                     View Plans (From ₹{minPlanPrice})
+                  </button>
+                  <button className="btn btn-outline" onClick={() => setTab("suggest")}>
+                    Suggest Paper 💡
                   </button>
                 </div>
               </div>
@@ -834,6 +909,28 @@ export default function App() {
             <Icon.User /><span>Profile</span>
           </button>
         </nav>
+      )}
+
+      {topicPicker && (
+        <div className="modal-backdrop" onClick={e => e.target === e.currentTarget && setTopicPicker(null)}>
+          <section className="modal-card" style={{ width: "min(460px, 100%)" }}>
+            <button className="modal-x" onClick={() => setTopicPicker(null)} aria-label="Close">×</button>
+            <span className="eyebrow">CHOOSE YOUR FOCUS</span>
+            <h2 style={{ fontSize: 20 }}>{topicPicker.paper.title}</h2>
+            <p className="muted-sm" style={{ marginTop: 0 }}>Select whether you want mixed questions from all sections or a specific Class / Topic.</p>
+            <div className="stack" style={{ gap: 8, marginTop: 4 }}>
+              <button className="btn btn-primary full" onClick={() => startPaper(topicPicker.paper.id, "all")}>
+                All / Both Mixed (Full Paper) →
+              </button>
+              {topicPicker.topics.map(t => (
+                <button key={t.name} className="btn btn-outline full" style={{ justifyContent: "space-between" }} onClick={() => startPaper(topicPicker.paper.id, t.name)}>
+                  <span>{t.name}</span>
+                  <span className="pill">{t.count} Qs</span>
+                </button>
+              ))}
+            </div>
+          </section>
+        </div>
       )}
 
       {authModal && (
