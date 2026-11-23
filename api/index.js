@@ -347,7 +347,7 @@ app.get("/api/papers/:id/topics", async (req, res) => {
 app.post("/api/suggestions", async (req, res) => {
   try {
     if (!rateAllowed(req, "suggest", 6)) return res.status(429).json({ error: "Please wait a minute before sending another suggestion." });
-    const ck = unsign(cookie(req, USER_COOKIE));
+    const ck = unsign(cookie(req, SESSION_COOKIE));
     const name = String(req.body?.name || ck?.name || "Student").trim().slice(0, 80) || "Student";
     const email = String(req.body?.email || ck?.email || "").trim().slice(0, 120);
     const category = String(req.body?.category || "New Paper Request").trim().slice(0, 60);
