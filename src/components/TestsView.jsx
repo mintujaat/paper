@@ -24,8 +24,10 @@ const PaperCard = memo(function PaperCard({
         <span className={`pill ${isAvailable ? "good" : ""}`}>{statusBadge}</span>
       </div>
 
-      <h3>{paper.title}</h3>
-      {paper.description && <p className="paper-desc">{paper.description}</p>}
+      <div className="paper-body">
+        <h3>{paper.title}</h3>
+        {paper.description && <p className="paper-desc">{paper.description}</p>}
+      </div>
 
       <div className="meta-row">
         <span><Icon.Clock /> {paper.durationMinutes}m</span>
@@ -35,7 +37,7 @@ const PaperCard = memo(function PaperCard({
 
       {paper.sponsorName && (
         <div className="sponsor-box">
-          <span>
+          <span className="sponsor-name">
             Sponsored by <b>{paper.sponsorName}</b>
           </span>
           {paper.sponsorLink && (
@@ -108,48 +110,53 @@ const TestsView = memo(function TestsView({
   const hasCreds = credits > 0;
 
   return (
-    <div className="fade-in stack" style={{ gap: 20 }}>
+    <div className="fade-in stack home-stack">
       <section className="hero-surface compact-hero">
         <div className="hero-main">
-          <span className="hero-badge">
-            {freeOk ? "1ST MOCK TEST FREE" : hasCreds ? `${credits} CREDITS AVAILABLE` : "SMART EXAM PREP"}
-          </span>
+          <div className="hero-top-row">
+            <span className="hero-badge">
+              {freeOk ? "1ST MOCK TEST FREE" : hasCreds ? `${credits} CREDITS READY` : "SMART EXAM PREP"}
+            </span>
+          </div>
           <h1>Practice smarter for Govt &amp; Board Exams</h1>
           <p>
-            Every test draws 25 non-repeating questions from our curated bank with a 15-minute live
-            timer, instant rank, and step-by-step solutions.
+            25 fresh non-repeating questions per test with a 15-minute live timer, instant rank &amp;
+            detailed solutions.
           </p>
           <div className="hero-cta">
             <button
-              className="btn btn-primary"
+              className="btn btn-primary hero-cta-main"
               onClick={() => papers[0] && onStartPaper(papers[0].id)}
             >
-              {freeOk ? "Start Free Mock Test →" : "Start Mock Test →"}
+              {freeOk ? "Start Free Test →" : "Start Mock Test →"}
             </button>
-            <button className="btn btn-outline" onClick={() => onNavigate("plans")}>
-              View Plans (From ₹{minPlanPrice})
-            </button>
-            <button className="btn btn-outline" onClick={() => onNavigate("suggest")}>
-              Suggest Paper 💡
-            </button>
+            <div className="hero-cta-sub">
+              <button className="btn btn-outline" onClick={() => onNavigate("plans")}>
+                Plans (₹{minPlanPrice}+)
+              </button>
+              <button className="btn btn-outline" onClick={() => onNavigate("suggest")}>
+                Suggest 💡
+              </button>
+            </div>
           </div>
         </div>
+
         <div className="hero-highlights">
           <div className="hl-item">
             <b>1st Test Free</b>
-            <span>Try any exam paper with zero payment</span>
+            <span>Zero payment to start</span>
           </div>
           <div className="hl-item">
             <b>25 Fresh Qs</b>
-            <span>Non-repeating questions per attempt</span>
+            <span>Non-repeating bank</span>
           </div>
           <div className="hl-item">
-            <b>Live Leaderboard</b>
-            <span>Compare score &amp; speed across India</span>
+            <b>Live Rank</b>
+            <span>Compete across India</span>
           </div>
           <div className="hl-item">
             <b>Revision Bank</b>
-            <span>Save tricky questions for last-day prep</span>
+            <span>Save tricky questions</span>
           </div>
         </div>
       </section>
@@ -157,33 +164,33 @@ const TestsView = memo(function TestsView({
       {user && (
         <section className="dash-strip">
           <div className="dash-tile clickable" onClick={onOpenPlans}>
-            <span>PAPER CREDITS</span>
+            <span>CREDITS</span>
             <b>{credits}</b>
-            <small>Tap to add more →</small>
+            <small>Add more →</small>
           </div>
           <div className="dash-tile clickable" onClick={() => onNavigate("attempts")}>
-            <span>TESTS TAKEN</span>
+            <span>TESTS</span>
             <b>{attemptsCount}</b>
-            <small>View score history →</small>
+            <small>View scores →</small>
           </div>
           <div className="dash-tile">
-            <span>BEST ACCURACY</span>
+            <span>BEST SCORE</span>
             <b>{bestAccuracy}%</b>
-            <small>Personal best</small>
+            <small>Accuracy</small>
           </div>
           <div className="dash-tile clickable" onClick={() => onNavigate("profile")}>
-            <span>ACCOUNT TIER</span>
+            <span>TIER</span>
             <b>{isPaidUser ? "PRO" : "FREE"}</b>
-            <small>{isPaidUser ? "Bookmarks unlocked" : "Upgrade with any pack"}</small>
+            <small>{isPaidUser ? "Saved unlocked" : "Upgrade →"}</small>
           </div>
         </section>
       )}
 
-      <section>
-        <div className="section-head" style={{ marginBottom: 10 }}>
+      <section className="catalog-sec">
+        <div className="catalog-head">
           <div>
             <span className="eyebrow">EXAM CATALOG</span>
-            <h2 style={{ fontSize: 22 }}>Available Mock Tests ({visiblePapers.length})</h2>
+            <h2>Available Mock Tests ({visiblePapers.length})</h2>
           </div>
           <div className="search-wrap">
             <Icon.Search />
@@ -197,10 +204,12 @@ const TestsView = memo(function TestsView({
           </div>
         </div>
 
-        <div className="cat-bar">
+        <div className="cat-bar" role="tablist" aria-label="Exam categories">
           {cats.map(c => (
             <button
               key={c}
+              role="tab"
+              aria-selected={cat === c}
               className={`cat-chip ${cat === c ? "active" : ""}`}
               onClick={() => setCat(c)}
             >

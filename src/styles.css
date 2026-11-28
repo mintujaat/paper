@@ -494,3 +494,154 @@ html { scroll-behavior: smooth; }
     scroll-behavior: auto !important;
   }
 }
+
+/* Mobile-First Home Redesign & Zero-Overflow Grid Fixes */
+.app-root, .container, .stack, .hero-surface, .catalog-sec, .papers-grid, .paper-card {
+  min-width: 0;
+  max-width: 100%;
+}
+.stack {
+  grid-template-columns: minmax(0, 1fr);
+}
+.home-stack {
+  gap: 18px;
+}
+.hero-cta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.hero-cta-sub {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.catalog-sec {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+}
+.catalog-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.catalog-head h2 {
+  font-size: clamp(19px, 2.4vw, 22px);
+}
+.cat-bar {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  max-width: 100%;
+  padding: 2px 0 6px;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.cat-bar::-webkit-scrollbar {
+  display: none;
+}
+.paper-card.compact-card {
+  overflow: hidden;
+}
+.paper-body {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+.paper-card.compact-card h3 {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.sponsor-box {
+  min-width: 0;
+}
+.sponsor-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sponsor-box a {
+  flex: 0 0 auto;
+}
+
+@media (max-width: 600px) {
+  .topbar-inner {
+    width: calc(100% - 20px);
+    height: 58px;
+    gap: 8px;
+  }
+  .brand small {
+    font-size: 8.5px;
+    letter-spacing: 0.9px;
+  }
+  .container {
+    width: calc(100% - 20px);
+    margin: 14px auto 86px;
+  }
+  .hero-surface.compact-hero {
+    padding: 16px;
+    gap: 12px;
+    border-radius: 16px;
+  }
+  .hero-surface.compact-hero h1 {
+    font-size: 20px;
+    line-height: 1.22;
+  }
+  .hero-surface.compact-hero p {
+    font-size: 12.5px;
+    margin-bottom: 12px;
+  }
+  .hero-cta {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 8px;
+    width: 100%;
+  }
+  .hero-cta-main {
+    width: 100%;
+  }
+  .hero-cta-sub {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    width: 100%;
+  }
+  .hero-cta-sub .btn {
+    width: 100%;
+    padding: 0 10px;
+    font-size: 12.5px;
+  }
+  .dash-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+  .dash-tile {
+    padding: 12px;
+    border-radius: 13px;
+  }
+  .dash-tile b {
+    font-size: 20px;
+  }
+  .catalog-head {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+  .search-wrap {
+    width: 100%;
+    min-height: 42px;
+  }
+  .paper-card.compact-card {
+    padding: 14px;
+    border-radius: 15px;
+    gap: 9px;
+  }
+  .meta-row {
+    gap: 10px;
+    font-size: 11px;
+  }
+}
