@@ -459,3 +459,38 @@ th { font-size: 10.5px; text-transform: uppercase; letter-spacing: .8px; color: 
   .m-plan-buy { border-top: 0; padding-top: 0; flex: 0 0 auto; }
   .m-price { font-size: 19px; }
 }
+
+/* Smooth Hardware-Accelerated Interactions & Skeletons */
+html { scroll-behavior: smooth; }
+.clickable { cursor: pointer; }
+.btn:active:not(:disabled),
+.cat-chip:active,
+.opt-btn:active,
+.p-dot:active,
+.dash-tile.clickable:active,
+.mobile-dock button:active {
+  transform: scale(0.975);
+}
+.opt-btn, .p-dot, .cat-chip, .dash-tile, .paper-card.compact-card {
+  will-change: transform;
+  transition: transform 0.14s cubic-bezier(0.2, 0.8, 0.2, 1), border-color 0.14s ease, background-color 0.14s ease, box-shadow 0.18s ease;
+}
+.skeleton-card {
+  height: 150px;
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  background: linear-gradient(90deg, var(--surface) 25%, var(--muted-bg) 50%, var(--surface) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.3s infinite linear;
+}
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
